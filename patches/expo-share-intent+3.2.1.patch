@@ -1,0 +1,33 @@
+diff --git a/node_modules/expo-share-intent/plugin/build/ios/withIosShareExtensionXcodeTarget.js b/node_modules/expo-share-intent/plugin/build/ios/withIosShareExtensionXcodeTarget.js
+index c9cbd8b..1a2ef6b 100644
+--- a/node_modules/expo-share-intent/plugin/build/ios/withIosShareExtensionXcodeTarget.js
++++ b/node_modules/expo-share-intent/plugin/build/ios/withIosShareExtensionXcodeTarget.js
+@@ -31,6 +31,16 @@ const withShareExtensionXcodeTarget = (config, parameters) => {
+         pbxProject.addBuildPhase([], "PBXResourcesBuildPhase", "Resources", target.uuid);
+         // Create a separate PBXGroup for the shareExtension's files
+         const pbxGroupKey = pbxProject.pbxCreateGroup(extensionName, extensionName);
++        // Link the new group into the project's main group, otherwise it (and the
++        // file references it holds, e.g. PrivacyInfo.xcprivacy) stays unreachable
++        // from the project root. CocoaPods' privacy manifest aggregation then
++        // crashes with "Consistency issue: no parent for object" when it tries to
++        // resolve the real path of an orphaned file reference.
++        const mainGroupKey = pbxProject.getFirstProject().firstProject.mainGroup;
++        const mainGroup = pbxProject.getPBXGroupByKey(mainGroupKey);
++        if (mainGroup && !mainGroup.children.some((child) => child.value === pbxGroupKey)) {
++            mainGroup.children.push({ value: pbxGroupKey, comment: extensionName });
++        }
+         // Add files which are not part of any build phase (ShareExtension-Info.plist)
+         pbxProject.addFile(infoPlistFilePath, pbxGroupKey);
+         // Add source files to our PbxGroup and our newly created PBXSourcesBuildPhase (ShareViewController.swift)
+@@ -71,6 +81,11 @@ const withShareExtensionXcodeTarget = (config, parameters) => {
+                     buildSettingsObj["SWIFT_EMIT_LOC_STRINGS"] = "YES";
+                     buildSettingsObj["SWIFT_VERSION"] = "5.0";
+                     buildSettingsObj["TARGETED_DEVICE_FAMILY"] = `"1,2"`;
++                    // The extension has no asset catalog, so there is nothing for Xcode
++                    // to generate GeneratedAssetSymbols.swift from. Without this, recent
++                    // Xcode versions still list that file as a Swift compiler input and
++                    // fail with "Error opening input file ... GeneratedAssetSymbols.swift".
++                    buildSettingsObj["ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOLS"] = "NO";
+                 }
+             }
+         }
