@@ -220,7 +220,7 @@ const ShareFormScreen = ({ route, navigation }) => {
           disabled={saving}
           loading={saving}
           variant="positive"
-          title={i18n.t('wishlist.save')}
+          title={i18n.t('wishlist.addWishSubmit')}
         />
       </View>
     </SafeAreaView>

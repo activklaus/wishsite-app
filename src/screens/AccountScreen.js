@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, ScrollView, Animated, PanResponder, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, ScrollView, Animated, PanResponder, ActivityIndicator, Switch } from 'react-native';
 import api from '../services/api';
 import i18n from '../i18n';
 import { SvgXml } from 'react-native-svg';
@@ -10,6 +10,7 @@ import { RADIUS, cardStyle } from '../styles/shared';
 import Button from '../components/Button';
 import TextField from '../components/TextField';
 import { deleteIcon } from '../styles/icons';
+import { isBiometricSupported, getBiometricLockEnabled, setBiometricLockEnabled, authenticateWithBiometrics } from '../services/biometricAuth';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -29,6 +30,8 @@ const AccountScreen = ({ onBack, onLogout, onAccountDeleted }) => {
   const [resendingConfirmation, setResendingConfirmation] = useState(false);
   const [resendingNewsletter, setResendingNewsletter] = useState(false);
   const [error, setError] = useState('');
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
 
   const panResponder = useRef(
@@ -60,7 +63,23 @@ const AccountScreen = ({ onBack, onLogout, onAccountDeleted }) => {
 
   useEffect(() => {
     loadUser();
+    (async () => {
+      const supported = await isBiometricSupported();
+      setBiometricSupported(supported);
+      if (supported) {
+        setBiometricEnabled(await getBiometricLockEnabled());
+      }
+    })();
   }, []);
+
+  const handleToggleBiometric = async (value) => {
+    if (value) {
+      const success = await authenticateWithBiometrics();
+      if (!success) return;
+    }
+    await setBiometricLockEnabled(value);
+    setBiometricEnabled(value);
+  };
 
   const loadUser = async () => {
     try {
@@ -276,6 +295,15 @@ const AccountScreen = ({ onBack, onLogout, onAccountDeleted }) => {
       color: theme.textMuted,
       marginBottom: 5,
     },
+    biometricRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    biometricTextWrapper: {
+      flex: 1,
+      marginRight: 15,
+    },
   });
 
   if (loading) {
@@ -399,6 +427,22 @@ const AccountScreen = ({ onBack, onLogout, onAccountDeleted }) => {
                 fontSize={isTablet ? 18 : 16}
                 title={i18n.t('account.saveChanges')}
               />
+            </View>
+          )}
+
+          {biometricSupported && (
+            <View style={[styles.card, { marginTop: 20 }]}>
+              <View style={styles.biometricRow}>
+                <View style={styles.biometricTextWrapper}>
+                  <Text style={styles.label}>{i18n.t('biometricLock.settingLabel')}</Text>
+                  <Text style={styles.hintText}>{i18n.t('biometricLock.settingHint')}</Text>
+                </View>
+                <Switch
+                  value={biometricEnabled}
+                  onValueChange={handleToggleBiometric}
+                  trackColor={{ true: theme.primary }}
+                />
+              </View>
             </View>
           )}
 

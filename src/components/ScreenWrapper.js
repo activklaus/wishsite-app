@@ -6,6 +6,7 @@ import { strongStyle } from '../styles/fonts';
 import { useTheme } from '../hooks/useTheme';
 import { RADIUS } from '../styles/shared';
 import { accountIcon, logoutIcon } from '../styles/icons';
+import AnimatedMenu from './AnimatedMenu';
 import i18n from '../i18n';
 
 const { width } = Dimensions.get('window');
@@ -43,9 +44,9 @@ const ScreenWrapper = ({ children, onLogout, showMenu = false, onLogoPress, onNe
                 <TouchableWithoutFeedback onPress={() => setMenuVisible(false)}>
                   <View style={styles.menuOverlay} />
                 </TouchableWithoutFeedback>
-                <View style={[styles.dropdownMenu, { backgroundColor: theme.surface }]}>
+                <AnimatedMenu style={[styles.dropdownMenu, { backgroundColor: theme.surface }]}>
                   <View style={styles.menuHeader}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.menuCloseButton}
                       onPress={() => setMenuVisible(false)}
                     >
@@ -78,7 +79,7 @@ const ScreenWrapper = ({ children, onLogout, showMenu = false, onLogoPress, onNe
                     <Text style={[styles.menuItemText, { color: theme.text }]}>{i18n.t('logout')}</Text>
                   </View>
                 </TouchableOpacity>
-                </View>
+                </AnimatedMenu>
               </>
             )}
           </View>
@@ -106,9 +107,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    height: 60,
+    height: 74,
     paddingHorizontal: 16,
-    paddingTop: 10,
+    paddingTop: 24,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',

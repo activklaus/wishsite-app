@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "451952005716",
+    "project_id": "wishsite-af934",
+    "storage_bucket": "wishsite-af934.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:451952005716:android:ef18515846cbb6d160d3c1",
+        "android_client_info": {
+          "package_name": "net.wishsite.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA1-FpAKD4ZRGSSdI-nL5C2HMdEvu8Jd3Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

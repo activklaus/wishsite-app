@@ -23,7 +23,8 @@
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false,
           "NSAllowsLocalNetworking": true
-        }
+        },
+        "NSFaceIDUsageDescription": "Wishsite nutzt Face ID, um deine wishsites vor fremdem Zugriff auf diesem Gerät zu schützen."
       }
     },
     "android": {
@@ -31,7 +32,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "net.wishsite.app"
+      "package": "net.wishsite.app",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -59,7 +61,15 @@
           },
           "iosShareExtensionName": "ShareExtension"
         }
-      ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff"
+        }
+      ],
+      "expo-secure-store"
     ],
     "extra": {
       "eas": {

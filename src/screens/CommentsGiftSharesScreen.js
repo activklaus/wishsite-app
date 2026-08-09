@@ -1,23 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Image, ScrollView, Alert, ActivityIndicator, Modal } from 'react-native';
 import i18n from '../i18n';
 import api from '../services/api';
 import { useTheme } from '../hooks/useTheme';
-import { headingStyle, bodyStyle, strongStyle } from '../styles/fonts';
-import { RADIUS, cardStyle } from '../styles/shared';
+import { bodyStyle, strongStyle } from '../styles/fonts';
+import { RADIUS } from '../styles/shared';
 import { SvgXml } from 'react-native-svg';
 import { deleteIcon } from '../styles/icons';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
 
-// Admin-only read view mirroring wishsite3's gift_shares/_edit_gift_shares.html.erb,
-// reached behind a warning (confirm_edit) since comments/gift shares are a visitor
-// coordination tool that the wishlist owner is not normally meant to see.
+// Admin-only popup mirroring wishsite3's gift_shares/edit.js.erb (showPopup(...) over the
+// current page), reached behind a warning (confirm_edit) since comments/gift shares are a
+// visitor coordination tool that the wishlist owner is not normally meant to see.
 const CommentsGiftSharesScreen = ({ wishlistAdminKey, item, onBack }) => {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [comments, setComments] = useState([]);
   const [giftShares, setGiftShares] = useState([]);
@@ -92,38 +90,51 @@ const CommentsGiftSharesScreen = ({ wishlistAdminKey, item, onBack }) => {
   };
 
   const styles = StyleSheet.create({
-    container: {
+    modalOverlay: {
       flex: 1,
-      backgroundColor: theme.background,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
     },
-    header: {
+    modalContent: {
+      backgroundColor: theme.surface,
+      borderRadius: RADIUS.card,
+      padding: 20,
+      width: '90%',
+      maxHeight: '80%',
+      position: 'relative',
+    },
+    // Mirrors web's showPopup(), which always prepends a titlebar with the wishsite logo and a
+    // close button to every popup, regardless of its content.
+    titlebar: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: isTablet ? 30 : 20,
-      paddingTop: insets.top + 12,
-      paddingBottom: 12,
-      backgroundColor: theme.surface,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.border,
+      justifyContent: 'space-between',
+      marginBottom: 15,
     },
-    backButton: {
-      marginRight: isTablet ? 20 : 15,
+    logo: {
+      width: 90,
+      height: 18,
+      opacity: 0.7,
     },
-    backButtonText: {
-      ...bodyStyle(isTablet ? 18 : 16),
-      color: theme.link,
+    modalCloseButton: {
+      width: 30,
+      height: 30,
+      justifyContent: 'center',
+      alignItems: 'center',
     },
-    title: {
-      ...headingStyle(isTablet ? 24 : 20),
+    modalCloseText: {
+      fontSize: 24,
       color: theme.text,
-      flex: 1,
-    },
-    contentContainer: {
-      padding: isTablet ? 30 : 20,
+      fontWeight: 'bold',
     },
     section: {
-      marginBottom: isTablet ? 24 : 18,
-      ...cardStyle(theme, false),
+      marginBottom: isTablet ? 30 : 24,
+    },
+    // Mirrors web's "#gift-shares + #comments { margin-top: 100px; }" (controllers/gift_shares.scss,
+    // scoped to #popup) — a deliberately large gap separating the two sections when both are shown.
+    commentsSectionAfterShares: {
+      marginTop: isTablet ? 60 : 48,
     },
     sectionHeader: {
       ...strongStyle(isTablet ? 17 : 15),
@@ -189,82 +200,78 @@ const CommentsGiftSharesScreen = ({ wishlistAdminKey, item, onBack }) => {
     deleteButton: {
       padding: 4,
     },
-    loadingContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
   });
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← {i18n.t('wishlist.back')}</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>{i18n.t('wishlist.giftShares.header')}</Text>
-      </View>
-
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator color={theme.primary} />
-        </View>
-      ) : (
-        <ScrollView contentContainerStyle={styles.contentContainer}>
-          {showShares && (
-            <View style={styles.section}>
-              <Text style={styles.sectionHeader}>
-                {giftShares.length > 0
-                  ? i18n.t('wishlist.giftShares.giftSharesHeaderWithCount', { count: giftShares.length })
-                  : i18n.t('wishlist.giftShares.giftSharesHeader')}
-              </Text>
-              {giftShares.length === 0 ? (
-                <Text style={styles.emptyText}>{i18n.t('wishlist.giftShares.adminNoSharesPresent')}</Text>
-              ) : (
-                <>
-                  {giftShares.map((share) => (
-                    <View key={share.id} style={styles.shareRow}>
-                      <Text style={styles.shareName}>{share.name}</Text>
-                      <Text style={styles.shareValue}>{share.value} {share.currency}</Text>
-                      <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteShare(share)}>
-                        <SvgXml xml={deleteIcon(theme.danger)} width={16} height={16} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                  <View style={styles.sumRow}>
-                    <Text style={styles.sumLabel}>{i18n.t('wishlist.giftShares.sum')}: {shareSum} {giftShares[0]?.currency}</Text>
-                  </View>
-                </>
-              )}
-            </View>
-          )}
-
-          <View style={styles.section}>
-            <Text style={styles.sectionHeader}>
-              {comments.length > 0
-                ? i18n.t('wishlist.giftShares.commentsHeaderWithCount', { count: comments.length })
-                : i18n.t('wishlist.giftShares.commentsHeader')}
-            </Text>
-            {comments.length === 0 ? (
-              <Text style={styles.emptyText}>{i18n.t('wishlist.giftShares.adminNoComments')}</Text>
-            ) : (
-              comments.map((comment) => (
-                <View key={comment.id} style={styles.commentBlock}>
-                  <View style={styles.commentHeader}>
-                    <Text style={styles.commentAuthor}>{comment.author}</Text>
-                    <Text style={styles.commentDate}>{new Date(comment.created_at).toLocaleDateString()}</Text>
-                    <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteComment(comment)}>
-                      <SvgXml xml={deleteIcon(theme.danger)} width={16} height={16} />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.commentContent}>{comment.content}</Text>
-                </View>
-              ))
-            )}
+    <Modal transparent animationType="fade" visible onRequestClose={onBack}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.titlebar}>
+            <Image source={require('../../assets/wishsite_logo_name_100.png')} style={styles.logo} resizeMode="contain" />
+            <TouchableOpacity style={styles.modalCloseButton} onPress={onBack}>
+              <Text style={styles.modalCloseText}>×</Text>
+            </TouchableOpacity>
           </View>
-        </ScrollView>
-      )}
-    </View>
+          {loading ? (
+            <ActivityIndicator color={theme.primary} style={{ marginBottom: 20 }} />
+          ) : (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {showShares && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionHeader}>
+                    {giftShares.length > 0
+                      ? i18n.t('wishlist.giftShares.giftSharesHeaderWithCount', { count: giftShares.length })
+                      : i18n.t('wishlist.giftShares.giftSharesHeader')}
+                  </Text>
+                  {giftShares.length === 0 ? (
+                    <Text style={styles.emptyText}>{i18n.t('wishlist.giftShares.adminNoSharesPresent')}</Text>
+                  ) : (
+                    <>
+                      {giftShares.map((share) => (
+                        <View key={share.id} style={styles.shareRow}>
+                          <Text style={styles.shareName}>{share.name}</Text>
+                          <Text style={styles.shareValue}>{share.value} {share.currency}</Text>
+                          <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteShare(share)}>
+                            <SvgXml xml={deleteIcon(theme.danger)} width={16} height={16} />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                      <View style={styles.sumRow}>
+                        <Text style={styles.sumLabel}>{i18n.t('wishlist.giftShares.sum')}: {shareSum} {giftShares[0]?.currency}</Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+              )}
+
+              <View style={[styles.section, showShares && styles.commentsSectionAfterShares]}>
+                <Text style={styles.sectionHeader}>
+                  {comments.length > 0
+                    ? i18n.t('wishlist.giftShares.commentsHeaderWithCount', { count: comments.length })
+                    : i18n.t('wishlist.giftShares.commentsHeader')}
+                </Text>
+                {comments.length === 0 ? (
+                  <Text style={styles.emptyText}>{i18n.t('wishlist.giftShares.adminNoComments')}</Text>
+                ) : (
+                  comments.map((comment) => (
+                    <View key={comment.id} style={styles.commentBlock}>
+                      <View style={styles.commentHeader}>
+                        <Text style={styles.commentAuthor}>{comment.author}</Text>
+                        <Text style={styles.commentDate}>{new Date(comment.created_at).toLocaleDateString()}</Text>
+                        <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteComment(comment)}>
+                          <SvgXml xml={deleteIcon(theme.danger)} width={16} height={16} />
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={styles.commentContent}>{comment.content}</Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
   );
 };
 

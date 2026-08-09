@@ -12,6 +12,9 @@ const TextField = ({
   fontSize = 16,
   showClear = true,
   multiline = false,
+  secureTextEntry = false,
+  autoCapitalize,
+  autoCorrect,
   style,
   inputStyle,
   onFocus,
@@ -29,6 +32,12 @@ const TextField = ({
         onChangeText={onChangeText}
         placeholderTextColor={theme.textMuted}
         multiline={multiline}
+        secureTextEntry={secureTextEntry}
+        // Secure fields must never auto-capitalize or auto-correct: iOS still applies
+        // both (first-letter capitalization, smart-punctuation substitution) to masked
+        // input, silently changing the submitted value from what was actually typed.
+        autoCapitalize={autoCapitalize ?? (secureTextEntry ? 'none' : 'sentences')}
+        autoCorrect={autoCorrect ?? !secureTextEntry}
         onFocus={(e) => {
           setFocused(true);
           onFocus && onFocus(e);

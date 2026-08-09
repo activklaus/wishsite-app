@@ -1,56 +1,95 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Dimensions, Modal, TextInput, Alert, ScrollView, TouchableWithoutFeedback, Image, Animated, PanResponder, Linking, ActivityIndicator, Share } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Dimensions, Modal, TextInput, Alert, ScrollView, Image, Animated, Linking, ActivityIndicator, Share, Platform, KeyboardAvoidingView, RefreshControl } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useAnimatedRef } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import i18n from '../i18n';
 import { headingStyle, bodyStyle, buttonStyle, strongStyle } from '../styles/fonts';
 import ItemDetailScreen from './ItemDetailScreen';
+import CommentsGiftSharesScreen from './CommentsGiftSharesScreen';
+import ReservationsScreen from './ReservationsScreen';
 import WishlistLockedScreen from './WishlistLockedScreen';
 import WishlistItem from '../components/WishlistItem';
 import SkeletonLoader from '../components/SkeletonLoader';
 import ModalSkeleton from '../components/ModalSkeleton';
 import SafeImage from '../components/SafeImage';
 import { useWishlistItems } from '../hooks/useWishlistItems';
+import { showToast } from '../services/toast';
 import api, { WEB_BASE_URL } from '../services/api';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { registerPushToken, unregisterPushToken } from '../services/pushNotifications';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { useTheme } from '../hooks/useTheme';
 import { RADIUS, INPUT_RADIUS, cardShadow, cardStyle, BANNER_HEIGHT, AVATAR_SIZE, AVATAR_BOTTOM_OFFSET } from '../styles/shared';
 import { palette } from '../styles/colors';
 import Button from '../components/Button';
 import TextField from '../components/TextField';
+import AnimatedMenu from '../components/AnimatedMenu';
 import ImageCropScreen from './ImageCropScreen';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { SvgXml } from 'react-native-svg';
-import { editIcon, cropIcon, backgroundIcon, userImageIcon, openIcon, clipboardIcon, shortlinkIcon, qrcodeIcon, embedIcon, shareIcon, deleteIcon } from '../styles/icons';
+import { editIcon, cropIcon, backgroundIcon, userImageIcon, openIcon, clipboardIcon, shortlinkIcon, qrcodeIcon, embedIcon, shareIcon, deleteIcon, duplicateIcon, moveIcon, lockIcon, hiddenIcon, sortIcon } from '../styles/icons';
 
-const { height: screenHeight, width } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
 
-// Ported from wishsite3 WishlistHelper::WISHLIST_COLOR_SCHEMES
-const WISHLIST_COLOR_SCHEMES = {
-  blue: palette.blue.l1,
-  green: palette.green.l1,
-  yellow: palette.yellow.l1,
-  red: palette.red.l1,
-  pink: palette.pink.l1,
-  violet: palette.violet.l1,
-  brown: palette.brown.l1,
-  mono: palette.black.l1,
+// Ported from wishsite3's `body[data-theme="..."]` rules (controllers/wishlist.scss) — a
+// wishlist color scheme doesn't just tint the banner on web, it also recolors the wishlist
+// title, item card backgrounds + top border, item price text, and the share button. Named
+// colors reuse the same shade (_l_1/_d_1) for accent/border/shareBg; "mono" is special-cased
+// since it mixes shades from three different palette entries (black + sand + white).
+const WISHLIST_THEME_COLORS = (() => {
+  const fromShades = (c) => ({
+    cardBg: c.l4, cardBgDark: c.d4,
+    accent: c.l1, accentDark: c.d1,
+    border: c.l1, borderDark: c.d1,
+    shareBg: c.l1, shareBgDark: c.d1,
+  });
+  return {
+    blue: fromShades(palette.blue),
+    green: fromShades(palette.green),
+    yellow: fromShades(palette.yellow),
+    red: fromShades(palette.red),
+    pink: fromShades(palette.pink),
+    violet: fromShades(palette.violet),
+    brown: fromShades(palette.brown),
+    mono: {
+      cardBg: palette.sand.l4, cardBgDark: palette.whiteDark.d4,
+      accent: palette.black.l1, accentDark: palette.whiteDark.d1,
+      border: palette.black.l2, borderDark: palette.whiteDark.d3,
+      shareBg: palette.black.l1, shareBgDark: palette.whiteDark.d3,
+    },
+  };
+})();
+
+// Mirrors wishsite3's `_wl_theme` computation (layouts/application.html.erb): the named
+// scheme can live in either the `theme` column or (legacy) `background_color`.
+const getWishlistThemeColors = (wishlist) => {
+  const key = [wishlist?.theme, wishlist?.background_color].find((v) => v && WISHLIST_THEME_COLORS[v]);
+  return key ? WISHLIST_THEME_COLORS[key] : null;
 };
 
 const getWishlistBannerColor = (color) => {
   if (!color || color === '#ffffff') return null;
   if (color.startsWith('#')) return color;
-  return WISHLIST_COLOR_SCHEMES[color] || null;
+  return WISHLIST_THEME_COLORS[color]?.accent || null;
+};
+
+const getWishlistBannerDarkColor = (color) => {
+  if (!color || color === '#ffffff') return null;
+  if (color.startsWith('#')) return color;
+  return WISHLIST_THEME_COLORS[color]?.accentDark || null;
 };
 
 const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, onLogout, autoOpenEdit }) => {
   const { theme, isDarkMode } = useTheme();
   const insets = useSafeAreaInsets();
-  const { items, setItems, loading, wishlistData, locked, updateItem, deleteItem, addItem, loadSingleItem, updateWishlist, deleteWishlist } = useWishlistItems(wishlist, authToken);
+  const { items, setItems, loading, loadItems, wishlistData, locked, updateItem, deleteItem, duplicateItem, moveItem, addItem, loadSingleItem, loadItemAdmin, updateWishlist, deleteWishlist } = useWishlistItems(wishlist, authToken);
+  const [refreshing, setRefreshing] = useState(false);
+  const [itemRefreshing, setItemRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [wishTitle, setWishTitle] = useState('');
   const [searching, setSearching] = useState(false);
@@ -61,21 +100,38 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const [addingItem, setAddingItem] = useState(null);
   const [optionsVisible, setOptionsVisible] = useState(null);
   const [optionsMenuPosition, setOptionsMenuPosition] = useState({ x: 0, y: 0 });
+  // Mirrors items_controller.rb#move_form (web) — picking a target among the user's own
+  // other wishlists. moveItemTarget is the item being moved (null when the picker is closed).
+  const [moveItemTarget, setMoveItemTarget] = useState(null);
+  const [moveWishlists, setMoveWishlists] = useState([]);
+  const [loadingMoveWishlists, setLoadingMoveWishlists] = useState(false);
+  const [movingItem, setMovingItem] = useState(false);
   const [directAddMode, setDirectAddMode] = useState(false);
   const [imagePickerItem, setImagePickerItem] = useState(null); // { itemId, images, selectedIndex }
   const [loadingImages, setLoadingImages] = useState(false);
+  // Mirrors web's showOverlay(true, true) shown while items_controller.rb#copy / #move run.
+  const [performingItemAction, setPerformingItemAction] = useState(false);
   const [fromSearch, setFromSearch] = useState(false);
-  const [directWish, setDirectWish] = useState({ title: '', description: '', price: '', url: '', hidden: false, allow_reservation: true, images: [], selectedImageIndex: 0, position: 0 });
+  // imagesChecked: true once an image-scrape attempt for a URL has actually completed (whether
+  // or not it found anything) — distinguishes "no URL entered yet" (images: [], stay silent)
+  // from "URL scraped, found nothing" (images: [], show the no-image-found notice), mirroring
+  // wishsite3's images/load_images.js.erb `if @images.size > 0 ... else <no_image.png notice>`.
+  const [directWish, setDirectWish] = useState({ title: '', description: '', price: '', url: '', hidden: false, allow_reservation: true, images: [], imagesChecked: false, selectedImageIndex: 0, position: 0 });
   const [itemDetailMode, setItemDetailMode] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
+  // Mirrors web's showPopup() always removing any existing #popup first — only one of these can
+  // be open at a time, opening one replaces the other instead of stacking.
+  const [activeEditItemPopup, setActiveEditItemPopup] = useState(null); // null | 'reservations' | 'giftShares'
   const [wishlistScrollPosition, setWishlistScrollPosition] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [editItem, setEditItem] = useState({ title: '', description: '', price: '', quantity: '1', links: [{ url: '' }], allow_reservation: true, hidden: false });
+  const [showQuantityPicker, setShowQuantityPicker] = useState(false);
+  const QUANTITY_OPTIONS = Array.from({ length: 100 }, (_, i) => i + 1); // matches web's <select> of 1..100
   const [wishlistOptionsVisible, setWishlistOptionsVisible] = useState(false);
   const [editWishlistMode, setEditWishlistMode] = useState(false);
   const [loadingEditWishlist, setLoadingEditWishlist] = useState(false);
   const [loadingShareMenu, setLoadingShareMenu] = useState(false);
-  const [editWishlist, setEditWishlist] = useState({ title: '', description: '', owner_name: '', theme: '', named_reservation_required: false, items_sharable: true, crawlable: false, reservation_notices: false, newsletter_accepted: false });
+  const [editWishlist, setEditWishlist] = useState({ title: '', description: '', owner_name: '', theme: '', named_reservation_required: false, items_sharable: true, hide_reserved_items_by_default: true, crawlable: false, reservation_notices: false, push_notifications: false, newsletter_accepted: false });
   const [showEmailField, setShowEmailField] = useState(false);
   const [newEmailInput, setNewEmailInput] = useState('');
   const [resendingConfirmation, setResendingConfirmation] = useState(false);
@@ -107,35 +163,79 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const [customKeyInput, setCustomKeyInput] = useState('');
   const [savingCustomKey, setSavingCustomKey] = useState(false);
   const flatListRef = useRef(null);
-  const wishlistRef = useRef(null);
-  const slideAnim = useRef(new Animated.Value(0)).current;
+  // useAnimatedRef (not a plain useRef) so swipeBackGesture below can be marked as running
+  // simultaneously with this list's own native gestures — otherwise it fully compatible as a
+  // normal ref for the imperative scrollToIndex/scrollToOffset calls used elsewhere.
+  const wishlistRef = useAnimatedRef();
+  // Starts off-screen and animates in on mount (see the useEffect below) — matches
+  // ItemDetailScreen's entrance animation, so opening a wishlist flies in from the right just
+  // like opening an item does. Also doubles as the swipe-back-out gesture's animated value.
+  const slideAnim = useRef(new Animated.Value(width)).current;
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (evt, gestureState) => gestureState.dx > 20 && !modalVisible && !editMode && !editWishlistMode && !itemDetailMode,
-      onPanResponderMove: (evt, gestureState) => {
-        if (gestureState.dx > 0) {
-          slideAnim.setValue(gestureState.dx);
-        }
-      },
-      onPanResponderRelease: (evt, gestureState) => {
-        if (gestureState.dx > width * 0.3) {
-          Animated.timing(slideAnim, {
-            toValue: width,
-            duration: 200,
-            useNativeDriver: true,
-          }).start(() => onBack());
-        } else {
-          Animated.spring(slideAnim, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-        }
-      },
+  // Gesture.Pan() (react-native-gesture-handler) instead of the old PanResponder: a plain
+  // PanResponder loses the touch-negotiation against the items FlatList/ScrollView for any drag
+  // starting over them, so swipe-back only ever worked when started right over the header.
+  // activeOffsetX/failOffsetY let this coexist with the list's own vertical scrolling — a
+  // predominantly vertical drag fails this gesture and falls through to the list; a
+  // predominantly horizontal-rightward one wins it, from anywhere on screen. Recreated fresh
+  // every render (cheap), so — unlike the old useRef(PanResponder...) — it never goes stale.
+  // simultaneousWithExternalGesture is additionally required for pull-to-refresh specifically:
+  // without it, this Pan gesture intercepts the initial touch before the list's native
+  // RefreshControl gesture recognizer gets a chance to, even though this one fails moments later
+  // for a vertical drag — the refresh spinner just never appears.
+  const swipeBackGesture = Gesture.Pan()
+    .enabled(!modalVisible && !editMode && !editWishlistMode && !itemDetailMode)
+    .activeOffsetX(15)
+    .failOffsetY([-15, 15])
+    .simultaneousWithExternalGesture(wishlistRef)
+    .onUpdate((e) => {
+      if (e.translationX > 0) {
+        slideAnim.setValue(e.translationX);
+      }
     })
-  ).current;
+    .onEnd((e) => {
+      if (e.translationX > width * 0.3) {
+        Animated.timing(slideAnim, {
+          toValue: width,
+          duration: 200,
+          useNativeDriver: true,
+        }).start(() => onBack());
+      } else {
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      }
+    })
+    .runOnJS(true);
 
+  useEffect(() => {
+    Animated.timing(slideAnim, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, []);
 
+  // Tapping the back button (as opposed to swiping) skipped the slide-out animation entirely —
+  // matches ItemDetailScreen's handleBack.
+  const handleBack = () => {
+    Animated.timing(slideAnim, {
+      toValue: width,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      onBack();
+    });
+  };
+
+  // Pull-to-refresh: scrolling past the top of the item list re-fetches both the items and the
+  // wishlist header fields (reserved counts, etc.) — loadItems() already covers both.
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadItems();
+    setRefreshing(false);
+  };
 
   const handleAddWish = (position = 0) => {
     closeAllMenus();
@@ -173,6 +273,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
           hidden: false,
           allow_reservation: true,
           images: imagesArray,
+          imagesChecked: true,
           selectedImageIndex: 0,
           position: directWish.position
         });
@@ -255,6 +356,87 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     }
   };
 
+  // Mirrors items_controller.rb#copy (web) — clones the item server-side and re-inserts it
+  // directly after the original. Web also shows a loading overlay for the duration and, on
+  // success, a flash notice plus a jump back to the original item's position (@last_item_id).
+  const handleDuplicateItem = async (item) => {
+    setOptionsVisible(null);
+    const wasInDetailView = itemDetailMode;
+    setPerformingItemAction(true);
+    try {
+      const freshItems = await duplicateItem(item.id);
+      if (wasInDetailView) {
+        setItemDetailMode(false);
+        setSelectedItem(null);
+        const index = freshItems.findIndex((i) => i.id === item.id);
+        if (index >= 0) {
+          setTimeout(() => {
+            wishlistRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
+          }, 200);
+        }
+      }
+    } catch (error) {
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.duplicateItemError'));
+    } finally {
+      setPerformingItemAction(false);
+    }
+  };
+
+  // Mirrors items_controller.rb#move_form (web): loads the user's own other wishlists to
+  // pick a move target from.
+  const handleOpenMoveItem = async (item) => {
+    setOptionsVisible(null);
+    setMoveItemTarget(item);
+    setLoadingMoveWishlists(true);
+    try {
+      const { data } = await api.get('/user');
+      setMoveWishlists((data.wishlists || []).filter((wl) => wl.admin_key !== currentWishlist.admin_key));
+    } catch (error) {
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.moveItemLoadError'));
+      setMoveItemTarget(null);
+    } finally {
+      setLoadingMoveWishlists(false);
+    }
+  };
+
+  const handleCloseMoveItem = () => {
+    setMoveItemTarget(null);
+    setMoveWishlists([]);
+  };
+
+  // Mirrors items_controller.rb#move (web) — reassigns the item to the chosen wishlist and
+  // appends it at the end there.
+  const handleMoveItemTo = async (targetWishlist) => {
+    if (!moveItemTarget) return;
+    // The item now belongs to a different wishlist — nothing left to show here if its detail
+    // view was open. Its current index is captured now (before it's removed from this list) so
+    // we can scroll back to roughly where it used to sit.
+    const wasInDetailView = itemDetailMode && selectedItem?.id === moveItemTarget.id;
+    const previousIndex = items.findIndex((i) => i.id === moveItemTarget.id);
+    setMovingItem(true);
+    setPerformingItemAction(true);
+    try {
+      const freshItems = await moveItem(moveItemTarget.id, targetWishlist.admin_key);
+      handleCloseMoveItem();
+      showToast(i18n.t('wishlist.moveItemSuccess', { wishlist: targetWishlist.title }));
+      if (wasInDetailView) {
+        setItemDetailMode(false);
+        setSelectedItem(null);
+        if (previousIndex >= 0 && freshItems.length > 0) {
+          const clampedIndex = Math.min(previousIndex, freshItems.length - 1);
+          setTimeout(() => {
+            wishlistRef.current?.scrollToIndex({ index: clampedIndex, animated: true, viewPosition: 0.3 });
+          }, 200);
+        }
+      }
+    } catch (error) {
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.moveItemError'));
+    } finally {
+      setMovingItem(false);
+      setPerformingItemAction(false);
+    }
+  };
+
   const handleDeleteItem = (item) => {
     Alert.alert(
       i18n.t('wishlist.removeConfirm'),
@@ -278,6 +460,10 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     try {
       await deleteItem(itemId);
       setOptionsVisible(null);
+      // The item detail view (if open for this item) has nothing left to show once it's deleted.
+      if (itemDetailMode && selectedItem?.id === itemId) {
+        handleBackFromItemDetail();
+      }
     } catch (error) {
     }
   };
@@ -285,9 +471,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const handleDirectAdd = async () => {
     setDirectAddMode(true);
     setFromSearch(false);
-    const initialWish = { title: wishTitle, description: '', price: '', url: '', hidden: false, allow_reservation: true, images: [], selectedImageIndex: 0 };
+    const initialWish = { title: wishTitle, description: '', price: '', url: '', hidden: false, allow_reservation: true, images: [], imagesChecked: false, selectedImageIndex: 0 };
     setDirectWish(initialWish);
-    
+
     // Wenn wishTitle eine URL ist, lade Bilder
     if (wishTitle.trim().startsWith('http://') || wishTitle.trim().startsWith('https://')) {
       try {
@@ -297,6 +483,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             ...prev,
             url: wishTitle.trim(),
             images: response.data.images,
+            imagesChecked: true,
             selectedImageIndex: 0
           }));
         }
@@ -472,20 +659,40 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     }
   };
 
-  const handleItemPress = async (item) => {
-    setSelectedItem(item);
-    setItemDetailMode(true);
-    // Refresh in the background so reservation status etc. can't go stale while the modal is open,
-    // without blocking on a loading spinner for what's otherwise an instant view action.
+  // Shared by handleItemPress's background refresh-on-open and the item detail view's
+  // pull-to-refresh — re-fetches the whole item list (reservation status etc. can only be
+  // known list-wide) and re-applies just the one item, if it's still the one being viewed.
+  const refreshSelectedItem = async (itemId) => {
     try {
       const { data } = await api.get(`/wishlists/${currentWishlist.admin_key}/admin`);
       setItems(data.items || []);
-      const fresh = (data.items || []).find(i => i.id === item.id);
+      const fresh = (data.items || []).find(i => i.id === itemId);
       if (fresh) {
         // Only apply if the user is still looking at this same item (avoids a late response
         // overwriting a different item they've since navigated to).
-        setSelectedItem(prev => (prev && prev.id === item.id ? fresh : prev));
+        setSelectedItem(prev => (prev && prev.id === itemId ? fresh : prev));
       }
+    } catch (error) {
+      // keep showing the already-cached item, non-fatal
+    }
+  };
+
+  const handleItemPress = (item) => {
+    setSelectedItem(item);
+    setItemDetailMode(true);
+    // Refresh in the background so reservation status etc. can't go stale while the modal is
+    // open, without blocking on a loading spinner for what's otherwise an instant view action.
+    refreshSelectedItem(item.id);
+  };
+
+  // Used by the item detail view's own pull-to-refresh - unlike refreshSelectedItem above, this
+  // fetches just the one item (GET .../items/:id) instead of the whole wishlist, since the user
+  // pulling to refresh from inside a single item's view shouldn't reload the entire list.
+  const refreshSingleItem = async (itemId) => {
+    try {
+      const fresh = await loadItemAdmin(itemId);
+      setSelectedItem(prev => (prev && prev.id === itemId ? fresh : prev));
+      setItems(prev => prev.map(i => (i.id === itemId ? fresh : i)));
     } catch (error) {
       // keep showing the already-cached item, non-fatal
     }
@@ -521,8 +728,11 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
         theme: data.theme || '',
         named_reservation_required: data.named_reservation_required || false,
         items_sharable: data.items_sharable !== false,
+        // Column default is true (db/schema.rb), so only an explicit `false` should opt out.
+        hide_reserved_items_by_default: data.hide_reserved_items_by_default !== false,
         crawlable: data.crawlable || false,
         reservation_notices: data.reservation_notices || false,
+        push_notifications: data.push_notifications || false,
         newsletter_accepted: data.newsletter_accepted || false
       });
       setNewEmailInput(data.new_email || '');
@@ -542,6 +752,22 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       handleEditWishlist();
     }
   }, []);
+
+  // Mobile-only opt-in (no web equivalent): registers/unregisters this device's Expo push
+  // token right away so the toggle takes effect even if the user backs out without saving,
+  // while `push_notifications` itself still rides along in the regular save payload below.
+  const handleTogglePushNotifications = async (enabled) => {
+    if (enabled) {
+      const success = await registerPushToken(currentWishlist.admin_key);
+      if (!success) {
+        Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.pushNotificationsPermissionError'));
+        return;
+      }
+    } else {
+      unregisterPushToken(currentWishlist.admin_key);
+    }
+    setEditWishlist(prev => ({ ...prev, push_notifications: enabled }));
+  };
 
   const handleSaveWishlist = async () => {
     setSavingWishlist(true);
@@ -810,7 +1036,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
 
   const handleCancelWishlistEdit = () => {
     setEditWishlistMode(false);
-    setEditWishlist({ title: '', description: '', owner_name: '', theme: '', named_reservation_required: false, items_sharable: true, crawlable: false, reservation_notices: false, newsletter_accepted: false });
+    setEditWishlist({ title: '', description: '', owner_name: '', theme: '', named_reservation_required: false, items_sharable: true, hide_reserved_items_by_default: true, crawlable: false, reservation_notices: false, push_notifications: false, newsletter_accepted: false });
     setShowEmailField(false);
     setNewEmailInput('');
   };
@@ -866,7 +1092,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             try {
               await deleteWishlist();
               setEditWishlistMode(false);
-              onBack();
+              handleBack();
             } catch (error) {}
           }
         }
@@ -916,6 +1142,12 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     setShareMenuVisible(false);
   };
 
+  // A wishlist color scheme, when set, recolors the title, item cards, item price and the
+  // share button — not just the banner (see WISHLIST_THEME_COLORS above). null when the
+  // wishlist has no named scheme, in which case everything below falls back to the app's
+  // own light/dark UI theme as before.
+  const wlColors = getWishlistThemeColors(currentWishlist);
+
   const styles = StyleSheet.create({
     container: {
       flex: 1,
@@ -944,6 +1176,19 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       color: theme.text,
       fontWeight: 'bold',
     },
+    // Stand-in for the native pull-to-refresh spinner when a banner is present - see the
+    // refreshControl/customRefreshIndicator comments where this is used.
+    customRefreshIndicator: {
+      position: 'absolute',
+      // Centered within the status-bar strip itself (insets.top tall), well clear of the
+      // banner's top edge below it - a small nudge here previously wasn't enough to read as
+      // clearly separate from the banner.
+      top: insets.top - 30,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      zIndex: 500,
+    },
     shareSection: {
       alignItems: 'center',
       paddingBottom: 36,
@@ -952,7 +1197,8 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       paddingVertical: 12,
       paddingHorizontal: 30,
       borderRadius: RADIUS.pill,
-      backgroundColor: theme.primary,
+      // Mirrors wishsite3's `#share-wl { background-color: var(--#{t}_l_1) }` per-scheme rule.
+      backgroundColor: wlColors ? (isDarkMode ? wlColors.shareBgDark : wlColors.shareBg) : theme.primary,
       minWidth: 180,
       alignItems: 'center',
       ...cardShadow(theme, isDarkMode),
@@ -1081,7 +1327,8 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     },
     heroTitle: {
       ...headingStyle(28),
-      color: theme.text,
+      // Mirrors wishsite3's `#wishlist-header { color: var(--#{t}_l_1) }` per-scheme rule.
+      color: wlColors ? (isDarkMode ? wlColors.accentDark : wlColors.accent) : theme.text,
       textAlign: 'center',
       marginTop: 14,
       marginBottom: 12,
@@ -1138,8 +1385,10 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       ...strongStyle(isTablet ? 18 : 16),
       color: theme.text,
     },
+    // No paddingTop: the banner (this container's first child, via ListHeaderComponent) needs
+    // to sit flush against the colored status-bar strip above it — even a few px gap here
+    // shows through as a visible seam between the two.
     listContainer: {
-      paddingTop: 4,
       paddingBottom: 24,
     },
     insertRow: {
@@ -1230,6 +1479,18 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       backgroundColor: 'rgba(0, 0, 0, 0.5)',
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    // Mirrors web's showOverlay(true, true) — full-screen dim + spinner while duplicate/move run.
+    actionLoadingOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.4)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 4000,
     },
     uploadOverlay: {
       position: 'absolute',
@@ -1489,6 +1750,15 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     modalButtons: {
       marginTop: 20,
     },
+    modalLinkButton: {
+      marginTop: 14,
+      alignItems: 'center',
+    },
+    modalLinkButtonText: {
+      ...bodyStyle(isTablet ? 16 : 14),
+      color: theme.link,
+      textDecorationLine: 'underline',
+    },
     modalButtonsNarrow: {
       flexDirection: 'row',
       justifyContent: 'center',
@@ -1690,6 +1960,22 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     imageCarousel: {
       marginBottom: 15,
     },
+    noImagesFound: {
+      alignItems: 'center',
+      marginBottom: 15,
+      padding: 10,
+    },
+    noImagesFoundImage: {
+      width: 70,
+      height: 70,
+      marginBottom: 10,
+      opacity: 0.7,
+    },
+    noImagesFoundText: {
+      ...bodyStyle(isTablet ? 14 : 13),
+      color: theme.textMuted,
+      textAlign: 'center',
+    },
     carouselTitle: {
       ...headingStyle(isTablet ? 18 : 16),
       marginBottom: 10,
@@ -1754,13 +2040,20 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       textDecorationLine: 'underline',
       marginBottom: 5,
     },
+    // Mirrors wishsite3's `.item.card { background-color: var(--#{t}_l_4) }` and
+    // `.item.card:not(.reserved) { border-top: 3px solid var(--#{t}_l_1) }` per-scheme rules
+    // (the admin's own item view has no "reserved" concept to exclude, unlike the public one).
     itemCard: {
-      backgroundColor: theme.surface,
+      backgroundColor: wlColors ? (isDarkMode ? wlColors.cardBgDark : wlColors.cardBg) : theme.surface,
       marginHorizontal: 20,
       borderRadius: RADIUS.card,
       padding: 16,
       ...cardShadow(theme, isDarkMode),
       position: 'relative',
+      ...(wlColors ? {
+        borderTopWidth: 3,
+        borderTopColor: isDarkMode ? wlColors.borderDark : wlColors.border,
+      } : null),
     },
     // Visual feedback for the item currently being long-press-dragged.
     itemCardActive: {
@@ -1769,6 +2062,20 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       shadowRadius: 12,
       elevation: 8,
     },
+    // Mirrors #items.sortable-mode li.item .drag-handle's darkened background + centered grab
+    // icon (controllers/wishlist.scss) — RN has no direct backdrop-filter:blur equivalent
+    // without an extra native dependency, so this uses a plain darkened overlay instead.
+    dragActiveOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderRadius: RADIUS.card,
+      backgroundColor: 'rgba(0, 0, 0, 0.18)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
     optionsContainer: {
       position: 'absolute',
       top: 10,
@@ -1776,10 +2083,14 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       zIndex: 100,
     },
     optionsButton: {
-      padding: 5,
+      width: 32,
+      height: 32,
+      justifyContent: 'center',
+      alignItems: 'center',
     },
+    // fontSize 20 to match the "⋯" toggle everywhere else (WishlistScreen's card menus).
     optionsText: {
-      ...buttonStyle(24),
+      ...buttonStyle(20),
       color: theme.text,
     },
     optionsCloseText: {
@@ -1802,10 +2113,25 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       minWidth: 150,
       zIndex: 1000,
     },
+    // top:0/right:0, not inset — this exactly overlays the "⋯" button it replaces (the menu's
+    // own top-right corner is positioned to match that button's measured position precisely,
+    // see optionsOverlay), so the × lands in exactly the same spot the "⋯" occupied.
+    optionsCloseButton: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      width: 32,
+      height: 32,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    // No divider, matching wishsite3's .admin-item-menu (controllers/wishlist.scss) — plain
+    // padding between entries, no border-bottom.
     optionItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
       padding: 15,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.border,
     },
     optionText: {
       ...strongStyle(isTablet ? 16 : 14),
@@ -1818,11 +2144,54 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       flexDirection: 'row',
       alignItems: 'flex-start',
     },
-    itemImage: {
+    // Wraps the image so the hidden-overlay/no-reservation badge (both position:absolute) can
+    // be anchored to the image itself, matching wishsite3's .item-image-frame.
+    itemImageWrapper: {
       width: isTablet ? 140 : 100,
       height: isTablet ? 140 : 100,
-      borderRadius: RADIUS.card,
       marginRight: 16,
+      borderRadius: RADIUS.card,
+      overflow: 'hidden',
+      position: 'relative',
+    },
+    itemImage: {
+      width: '100%',
+      height: '100%',
+    },
+    // Mirrors .item-image-frame.is-hidden (controllers/wishlist.scss): dark overlay + centered
+    // white "eye-off" icon over the image of a hidden item.
+    hiddenImageOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.45)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    // Mirrors .no-reservation-badge: small dark circular badge, bottom-right of the image.
+    noReservationBadge: {
+      position: 'absolute',
+      bottom: 8,
+      right: 8,
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    // Mirrors `.card.hidden { outline: 2px dashed ... }` (controllers/wishlist.scss).
+    itemCardHidden: {
+      borderWidth: 2,
+      borderStyle: 'dashed',
+      borderColor: theme.textMuted,
     },
     placeholderImage: {
       backgroundColor: theme.border,
@@ -1838,11 +2207,33 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       flex: 1,
       paddingRight: 30,
     },
+    // Mirrors `<h4>{show_quantity} {title}</h4>` (wishlist/_admin_item.html.erb) — quantity
+    // badge and title sit on the same line, not stacked.
+    itemNameRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 6,
+      marginBottom: 6,
+    },
     itemName: {
       ...strongStyle(isTablet ? 20 : 18),
       color: theme.text,
       lineHeight: isTablet ? 25 : 22,
-      marginBottom: 6,
+      flexShrink: 1,
+    },
+    // Mirrors .quantity-box (controllers/wishlist.scss) — shown only when quantity > 1
+    // (items_helper.rb#show_quantity, admin branch), simple "{quantity}x" bordered badge.
+    quantityBox: {
+      borderWidth: 2,
+      borderColor: theme.text,
+      borderRadius: 5,
+      paddingHorizontal: 4,
+      paddingVertical: 1,
+      flexShrink: 0,
+    },
+    quantityBoxText: {
+      ...strongStyle(isTablet ? 13 : 12),
+      color: theme.text,
     },
     itemDescription: {
       ...bodyStyle(isTablet ? 15 : 14),
@@ -1855,9 +2246,32 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       alignItems: 'center',
       justifyContent: 'flex-end',
     },
+    // Mirrors wishsite3's `.item .item-price { color: var(--#{t}_l_1) }` per-scheme rule.
     itemPrice: {
       ...strongStyle(isTablet ? 19 : 17),
-      color: theme.primary,
+      color: wlColors ? (isDarkMode ? wlColors.accentDark : wlColors.accent) : theme.primary,
+    },
+    // Mirrors .item-links-inline / .item-link-hint (modules/lists_and_items.scss).
+    itemLinkRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 6,
+    },
+    itemLinkFavicon: {
+      width: 12,
+      height: 12,
+      borderRadius: 2,
+    },
+    itemLinkText: {
+      ...strongStyle(isTablet ? 13 : 12),
+      color: theme.link,
+      flexShrink: 1,
+    },
+    itemLinkExtra: {
+      ...strongStyle(isTablet ? 13 : 12),
+      color: theme.link,
+      flexShrink: 0,
     },
     deleteWishlistLink: {
       marginTop: 32,
@@ -1865,6 +2279,50 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       alignItems: 'center',
       justifyContent: 'center',
       gap: 8,
+    },
+    moveItemEmptyText: {
+      ...bodyStyle(isTablet ? 15 : 14),
+      color: theme.textMuted,
+      textAlign: 'center',
+      marginVertical: 20,
+    },
+    moveItemWishlistRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 15,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    moveItemAvatar: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      marginRight: 12,
+      backgroundColor: theme.background,
+    },
+    moveItemWishlistTitle: {
+      ...strongStyle(isTablet ? 16 : 15),
+      color: theme.text,
+      flex: 1,
+    },
+    // Mirrors web's showPopup(), which always prepends a titlebar with the wishsite logo and a
+    // close button to every popup, regardless of its content (see ReservationsScreen.js).
+    moveItemTitlebar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 15,
+    },
+    moveItemLogo: {
+      width: 90,
+      height: 18,
+      opacity: 0.7,
+    },
+    moveItemCloseButton: {
+      width: 30,
+      height: 30,
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     editWishlistBorderedSection: {
       paddingVertical: 16,
@@ -1887,26 +2345,60 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const optionsOverlay = optionsVisible && (() => {
     const activeItem = items.find(i => i.id === optionsVisible);
     if (!activeItem) return null;
-    const menuHeight = 100;
-    // Content now starts right after the safe-area inset — no header bar height to add anymore.
-    const headerOffset = insets.top;
-    const adjustedY = optionsMenuPosition.y - headerOffset;
-    const top = adjustedY + menuHeight > screenHeight - headerOffset
-      ? adjustedY - menuHeight
-      : adjustedY;
+    // optionsMenuPosition is the touch point, treated as the button's approximate center
+    // (the button is a fixed 32x32 target) — so the 32x32 close button is centered on it.
+    // No insets.top subtraction here: this overlay's wrapper is position:absolute, and
+    // absolutely-positioned children in RN ignore their parent's padding (a longstanding
+    // Yoga/RN quirk) — SafeAreaView's padding-top (== insets.top) that pushes the normal-flow
+    // content down does NOT apply to this wrapper, so its top:0 is already true screen y=0,
+    // matching the touch event's own (also true-screen) pageY directly.
+    const BUTTON_SIZE = 32;
+    const { x: touchX, y: touchY } = optionsMenuPosition;
+    const top = touchY - BUTTON_SIZE / 2;
+    const right = width - (touchX + BUTTON_SIZE / 2);
     return (
-      <TouchableWithoutFeedback onPress={() => setOptionsVisible(null)}>
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 2000 }}>
-          <View style={[styles.optionsMenu, { position: 'absolute', top, right: 20, left: 'auto' }]}>
-            <TouchableOpacity style={styles.optionItem} onPress={() => { handleEditItem(activeItem); setOptionsVisible(null); }}>
-              <Text style={styles.optionText}>{i18n.t('wishlist.editItem')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.optionItem} onPress={() => { handleDeleteItem(activeItem); setOptionsVisible(null); }}>
-              <Text style={[styles.optionText, styles.removeText]}>{i18n.t('wishlist.remove')}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </TouchableWithoutFeedback>
+      // pointerEvents="box-none": this wrapper spans the full screen only so the menu can
+      // escape the DraggableFlatList's clipping/z-index — it must NOT swallow touches meant
+      // for other rows' "⋯" triggers underneath it (that was the "first tap only closes the
+      // old menu, doesn't open the new one" bug). Only the menu box itself (a real child)
+      // still receives touches; tapping another item's trigger now switches directly, same
+      // as the wishlist overview's card menus, which never had a full-screen backdrop either.
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 2000 }} pointerEvents="box-none">
+        <AnimatedMenu style={[
+          styles.optionsMenu,
+          { position: 'absolute', top, right, left: 'auto', paddingTop: BUTTON_SIZE },
+        ]}>
+          <TouchableOpacity style={styles.optionsCloseButton} onPress={() => setOptionsVisible(null)}>
+            <Text style={styles.optionsCloseText}>×</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.optionItem} onPress={() => { handleEditItem(activeItem); setOptionsVisible(null); }}>
+            <SvgXml xml={editIcon(theme.text)} width={16} height={16} />
+            <Text style={styles.optionText}>{i18n.t('wishlist.editItem')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.optionItem} onPress={() => handleDuplicateItem(activeItem)}>
+            <SvgXml xml={duplicateIcon(theme.text)} width={16} height={16} />
+            <Text style={styles.optionText}>{i18n.t('wishlist.duplicateItem')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.optionItem}
+            onPress={() => {
+              setOptionsVisible(null);
+              Alert.alert(i18n.t('wishlist.sortItems'), i18n.t('wishlist.sortItemsHint'));
+            }}
+          >
+            <SvgXml xml={sortIcon(theme.text)} width={16} height={16} />
+            <Text style={styles.optionText}>{i18n.t('wishlist.sortItems')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.optionItem} onPress={() => handleOpenMoveItem(activeItem)}>
+            <SvgXml xml={moveIcon(theme.text)} width={16} height={16} />
+            <Text style={styles.optionText}>{i18n.t('wishlist.moveItem')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.optionItem} onPress={() => { handleDeleteItem(activeItem); setOptionsVisible(null); }}>
+            <SvgXml xml={deleteIcon(theme.danger)} width={16} height={16} />
+            <Text style={[styles.optionText, styles.removeText]}>{i18n.t('wishlist.remove')}</Text>
+          </TouchableOpacity>
+        </AnimatedMenu>
+      </View>
     );
   })();
 
@@ -1918,7 +2410,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   // is_admin branch: full height whenever a banner exists (image or non-default color), regardless
   // of whether an avatar is also present; "reduced-height" only for an avatar with no banner at all;
   // no wrapper (0) when neither is present, so it takes up no space.
-  const bannerColor = getWishlistBannerColor(currentWishlist.background_color);
+  const bannerColor = isDarkMode
+    ? getWishlistBannerDarkColor(currentWishlist.background_color)
+    : getWishlistBannerColor(currentWishlist.background_color);
   const hasBanner = !!currentWishlist.background_image_url || !!bannerColor;
   const hasAvatar = !!currentWishlist.user_image_url;
   const bannerWrapperHeight = !hasBanner && !hasAvatar ? 0 : (hasBanner ? 325 : 275);
@@ -1933,12 +2427,93 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   // of parked high up with a big empty gap below it before the title starts.
   const backButtonTop = bannerWrapperHeight > 0 ? 15 : 24;
 
+  // Mirrors items_controller.rb#move_form (web) — pick which of the user's own other wishlists
+  // to move this item to. A plain top-level <Modal> here only ever presents correctly when the
+  // item detail Modal isn't already showing on top of it: iOS won't present a second modal from
+  // underneath one that's already presented, so triggering "Move" from within the item detail
+  // view would silently do nothing. Taking a `visible` param instead of reading state directly
+  // lets the same content be mounted twice — once at top level, once nested inside the item
+  // detail Modal — with mutually exclusive visibility, so exactly the right one ever activates.
+  const renderMoveItemPicker = (visible) => (
+    <Modal
+      animationType="slide"
+      transparent={true}
+      visible={visible}
+      onRequestClose={handleCloseMoveItem}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.moveItemTitlebar}>
+            <Image source={require('../../assets/wishsite_logo_name_100.png')} style={styles.moveItemLogo} resizeMode="contain" />
+            <TouchableOpacity style={styles.moveItemCloseButton} onPress={handleCloseMoveItem}>
+              <Text style={styles.modalCloseText}>×</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.modalTitle}>{i18n.t('wishlist.moveItemTitle')}</Text>
+          {loadingMoveWishlists ? (
+            <ActivityIndicator color={theme.primary} style={{ marginVertical: 20 }} />
+          ) : moveWishlists.length === 0 ? (
+            <Text style={styles.moveItemEmptyText}>{i18n.t('wishlist.moveItemNoWishlists')}</Text>
+          ) : (
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 320 }}>
+              {moveWishlists.map((wl) => (
+                <TouchableOpacity
+                  key={wl.id}
+                  style={styles.moveItemWishlistRow}
+                  disabled={movingItem}
+                  onPress={() => handleMoveItemTo(wl)}
+                >
+                  <Image
+                    source={wl.user_image_url ? { uri: wl.user_image_url } : require('../../assets/placeholder.png')}
+                    style={styles.moveItemAvatar}
+                  />
+                  <Text style={styles.moveItemWishlistTitle} numberOfLines={1}>{wl.title}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // Same reasoning as renderMoveItemPicker above: needs to be mountable both at top level and
+  // nested inside the item detail Modal, so it's visible regardless of which context triggered
+  // the duplicate/move action. Unlike the picker, this is a plain View, not a Modal — it only
+  // ever needs to cover whatever is already the frontmost layer, not become a new one itself.
+  const performingItemActionOverlay = performingItemAction && (
+    <View style={styles.actionLoadingOverlay}>
+      <ActivityIndicator color="#FFFFFF" size="large" />
+    </View>
+  );
+
   return (
     <SafeAreaView style={[styles.container]}>
-      <Animated.View style={[styles.container, { transform: [{ translateX: slideAnim }] }]} {...panResponder.panHandlers}>
-      <TouchableOpacity onPress={onBack} style={[styles.floatingBackButton, { top: backButtonTop }]}>
+      <StatusBar style={bannerColor ? 'light' : (isDarkMode ? 'light' : 'dark')} />
+      {/* Extends the wishlist's scheme color into the status bar area. Deliberately a direct
+          sibling of the Animated.View below, not nested inside it: position:'absolute'
+          children ignore their immediate parent's padding in RN, so as a direct child of
+          this padded SafeAreaView its top:0 lands at the true screen top (behind the notch)
+          instead of just below it — the same mechanism the item options menu overlay relies
+          on elsewhere on this screen. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top, backgroundColor: bannerColor || theme.background }} />
+      <GestureDetector gesture={swipeBackGesture}>
+      <Animated.View style={[styles.container, { transform: [{ translateX: slideAnim }] }]}>
+      <TouchableOpacity onPress={handleBack} style={[styles.floatingBackButton, { top: backButtonTop }]}>
         <Text style={styles.floatingBackArrowText}>←</Text>
       </TouchableOpacity>
+
+      {/* Stand-in for the native pull-to-refresh spinner when there's a banner (see the
+          refreshControl comment below) - pinned to a fixed screen position right under the
+          status bar, so it's never at the mercy of how far the native gesture reveals content.
+          Shown as soon as the list is pulled down (wishlistScrollPosition goes negative during
+          overscroll, well before the native gesture actually commits to onRefresh), not just once
+          `refreshing` flips true - otherwise it only ever appeared once the pull was released. */}
+      {(refreshing || wishlistScrollPosition < -10) && hasBanner && (
+        <View style={styles.customRefreshIndicator} pointerEvents="none">
+          <ActivityIndicator color={theme.primary} size="large" />
+        </View>
+      )}
 
       {(() => {
         const wishlistHeader = (
@@ -1982,7 +2557,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                       </TouchableOpacity>
                     )}
                     {avatarMenuVisible && (
-                      <View style={styles.avatarMenu}>
+                      <AnimatedMenu style={styles.avatarMenu}>
                         <TouchableOpacity style={styles.avatarMenuCloseButton} onPress={() => setAvatarMenuVisible(false)}>
                           <Text style={styles.avatarMenuToggleText}>×</Text>
                         </TouchableOpacity>
@@ -1998,7 +2573,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                           <SvgXml xml={deleteIcon(theme.danger)} width={16} height={16} />
                           <Text style={[styles.headerOptionText, { color: theme.danger }]}>{i18n.t('wishlist.removeAvatarLink')}</Text>
                         </TouchableOpacity>
-                      </View>
+                      </AnimatedMenu>
                     )}
                   </View>
                 )}
@@ -2020,7 +2595,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                   </TouchableOpacity>
                 )}
                 {wishlistOptionsVisible && (
-                  <View style={styles.headerOptionsMenu}>
+                  <AnimatedMenu style={styles.headerOptionsMenu}>
                     <TouchableOpacity style={styles.headerOptionsCloseButton} onPress={() => setWishlistOptionsVisible(false)}>
                       <Text style={styles.headerOptionsCloseText}>×</Text>
                     </TouchableOpacity>
@@ -2036,7 +2611,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                       <SvgXml xml={backgroundIcon(theme.text)} width={16} height={16} />
                       <Text style={styles.headerOptionText}>{imageActionLabel('background')}</Text>
                     </TouchableOpacity>
-                  </View>
+                  </AnimatedMenu>
                 )}
               </View>
               </View>
@@ -2076,7 +2651,61 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             containerStyle={{ flex: 1 }}
             contentContainerStyle={styles.listContainer}
             showsVerticalScrollIndicator={false}
-            onScroll={(event) => setWishlistScrollPosition(event.nativeEvent.contentOffset.y)}
+            // Without this, DraggableFlatList's internal reorder-drag gesture has no directional
+            // activation threshold at all and claims every touch-drag over the list immediately,
+            // in any direction — starving the screen's own swipe-back gesture (GestureDetector
+            // above) of horizontal drags entirely. This constrains it to the vertical axis,
+            // matching what reordering actually needs, and lets horizontal swipes fall through.
+            activationDistance={10}
+            // Must be passed as an explicit element rather than the refreshing/onRefresh
+            // shorthand — the underlying FlatList here is gesture-handler's wrapper (see
+            // react-native-draggable-flatlist's AnimatedFlatList), which doesn't auto-construct a
+            // RefreshControl from the shorthand props the way RN's own FlatList does.
+            // Deliberately React Native's own RefreshControl here, NOT gesture-handler's:
+            // gesture-handler's version (createNativeWrapper) wraps the native UIRefreshControl
+            // inside an extra NativeViewGestureHandler view, which breaks iOS's RCTScrollView
+            // native z-order/inset handling for it (no longer recognized as a real
+            // UIRefreshControl). ItemDetailScreen's plain ScrollView never hit the same issue.
+            // When there's a banner, the native spinner still only reveals a sliver right at the
+            // banner's own top edge — not enough room appears above it for the full spinner to
+            // clear, so it reads as "hidden behind the banner". Rather than fight that (an
+            // attempt to force extra room via a permanent content offset caused the list to
+            // scroll into the status bar instead — worse), the native spinner is made invisible
+            // here (transparent tint, still fully functional for the gesture/refreshing state)
+            // and a custom indicator is rendered instead, pinned right under the status bar - see
+            // the `refreshing && hasBanner` block near the floating back button below.
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor={hasBanner ? 'transparent' : theme.primary}
+                progressViewOffset={insets.top}
+              />
+            }
+            // scrollToIndex (used after duplicate/move to jump back to the item's position) can
+            // fail to measure a target that hasn't rendered/laid out yet, since rows don't all
+            // share one fixed height here. Falls back to an estimate instead of throwing.
+            onScrollToIndexFailed={(info) => {
+              setTimeout(() => {
+                wishlistRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true });
+              }, 100);
+            }}
+            // DraggableFlatList does NOT forward a plain `onScroll` prop to the underlying
+            // list — it drives scrolling through its own internal Reanimated scroll handler
+            // and exposes this callback (a plain number, not an event) instead. The previous
+            // `onScroll={...}` here was silently never firing at all.
+            onScrollOffsetChange={(offset) => {
+              setWishlistScrollPosition(offset);
+              // The item options menu is a page-absolute overlay (needed to escape the
+              // DraggableFlatList's own clipping/z-index), positioned once from the tap
+              // coordinates — it has no way to track/follow the list's scroll offset, so it
+              // would otherwise stay frozen in place while the item underneath it scrolls
+              // away. Dismiss it as soon as scrolling starts, same as most iOS/Android list
+              // menus do, rather than have it visibly detach from its item.
+              if (optionsVisible !== null) {
+                closeAllMenus();
+              }
+            }}
             scrollEventThrottle={16}
             ListHeaderComponent={wishlistHeader}
             ListFooterComponent={
@@ -2123,9 +2752,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
         visible={modalVisible}
         onRequestClose={handleCancelWish}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalContent}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={handleCancelWish} // oder handleCancelEdit oder handleCancelWishlistEdit
             >
@@ -2133,7 +2762,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             </TouchableOpacity>
             {directAddMode ? (
               // Direct Add Form
-              <>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                 <View style={styles.detailHeader}>
                   <TouchableOpacity onPress={handleBackToSearch}>
                     <Text style={styles.backButtonText}>{i18n.t('wishlist.backButton')}</Text>
@@ -2180,7 +2809,17 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                     />
                   </View>
                 )}
-                
+
+                {/* Mirrors wishsite3's images/load_images.js.erb else-branch: a URL was
+                    scraped but no images came back, shown with no_image.png + a hint that
+                    the user can still add an image themselves. */}
+                {directWish.imagesChecked && directWish.images.length === 0 && (
+                  <View style={styles.noImagesFound}>
+                    <Image source={require('../../assets/no_image.png')} style={styles.noImagesFoundImage} resizeMode="contain" />
+                    <Text style={styles.noImagesFoundText}>{i18n.t('wishlist.noImagesFoundNotice')}</Text>
+                  </View>
+                )}
+
                 <Text style={styles.inputLabel}>{i18n.t('wishlist.titlePlaceholder')}</Text>
                 <TextField
                   style={{ marginBottom: 15 }}
@@ -2260,9 +2899,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                 </View>
                 
                 <View style={styles.modalButtons}>
-                  <Button onPress={handleSaveDirectWish} fontSize={isTablet ? 18 : 16} title={i18n.t('wishlist.save')} />
+                  <Button onPress={handleSaveDirectWish} fontSize={isTablet ? 18 : 16} title={i18n.t('wishlist.addWishSubmit')} />
                 </View>
-              </>
+              </ScrollView>
             ) : selectedProduct ? (
               selectedProduct.deeplink ? (
                 // Search Product Details View
@@ -2374,8 +3013,11 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                           style={styles.resultItem}
                           onPress={() => handleSelectProduct(item)}
                         >
-                          <Image 
-                            source={item.image_url ? { uri: item.image_url } : require('../../assets/placeholder.png')}
+                          {/* Product search results mirror wishsite3's search_products/_result(_item).html.erb,
+                              which falls back to no_image.png specifically here — not default_wish_img.jpg
+                              (the logo placeholder used for actual wishlist items/avatars elsewhere). */}
+                          <Image
+                            source={item.image_url ? { uri: item.image_url } : require('../../assets/no_image.png')}
                             style={styles.resultImage}
                             resizeMode="cover"
                           />
@@ -2430,7 +3072,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
               </>
             )}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
       
       <Modal
@@ -2449,17 +3091,30 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             }}
             wishlistAdminKey={currentWishlist.admin_key}
             itemsSharable={currentWishlist.items_sharable}
+            namedReservationRequired={currentWishlist.named_reservation_required}
+            onDuplicate={handleDuplicateItem}
+            onMove={handleOpenMoveItem}
+            onDelete={handleDeleteItem}
+            refreshing={itemRefreshing}
+            onRefresh={async () => {
+              if (!selectedItem) return;
+              setItemRefreshing(true);
+              await refreshSingleItem(selectedItem.id);
+              setItemRefreshing(false);
+            }}
           />
         )}
+        {renderMoveItemPicker(!!moveItemTarget && itemDetailMode)}
+        {performingItemActionOverlay}
       </Modal>
-      
+
       <Modal
         animationType="slide"
         transparent={true}
         visible={editMode}
         onRequestClose={handleCancelEdit}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalContent}>
             <TouchableOpacity 
               style={styles.modalCloseButton}
@@ -2504,15 +3159,23 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             />
 
             <Text style={styles.inputLabel}>{i18n.t('wishlist.quantity')}</Text>
-            <TextField
+            {/* Web uses a <select> of 1..100 (items/_form.html.erb) — a plain number is the
+                only possible value there. Mobile equivalent: tapping opens a picker list
+                instead of a free-text field, same guarantee without relying on input filtering. */}
+            <TouchableOpacity
               style={{ marginBottom: 15 }}
-              placeholder={i18n.t('wishlist.quantity')}
-              value={editItem.quantity}
-              onChangeText={(text) => setEditItem({...editItem, quantity: text})}
-              keyboardType="numeric"
-              fontSize={isTablet ? 18 : 16}
-            />
-            
+              activeOpacity={0.7}
+              onPress={() => setShowQuantityPicker(true)}
+            >
+              <TextField
+                value={editItem.quantity}
+                editable={false}
+                showClear={false}
+                pointerEvents="none"
+                fontSize={isTablet ? 18 : 16}
+              />
+            </TouchableOpacity>
+
             <View style={styles.linksSection}>
               <Text style={styles.linksSectionTitle}>{i18n.t('wishlist.linksTitle')}</Text>
               {editItem.links.map((link, index) => (
@@ -2589,19 +3252,110 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                     title={i18n.t('wishlist.save')}
                   />
                 </View>
+                {!!editItem.allow_reservation && (
+                  <TouchableOpacity
+                    style={styles.modalLinkButton}
+                    onPress={() => {
+                      Alert.alert(
+                        i18n.t('wishlist.reservations.confirmEditHeader'),
+                        i18n.t('wishlist.reservations.confirmEditReservations'),
+                        [
+                          { text: i18n.t('wishlist.reservations.cancel'), style: 'cancel' },
+                          { text: i18n.t('wishlist.reservations.confirm'), onPress: () => setActiveEditItemPopup('reservations') }
+                        ]
+                      );
+                    }}
+                  >
+                    <Text style={styles.modalLinkButtonText}>{i18n.t('wishlist.reservations.showLink')}</Text>
+                  </TouchableOpacity>
+                )}
+                {!!currentWishlist.items_sharable && (
+                  <TouchableOpacity
+                    style={styles.modalLinkButton}
+                    onPress={() => {
+                      Alert.alert(
+                        i18n.t('wishlist.giftShares.confirmEditHeader'),
+                        i18n.t('wishlist.giftShares.confirmEditGiftShares'),
+                        [
+                          { text: i18n.t('wishlist.giftShares.cancel'), style: 'cancel' },
+                          { text: i18n.t('wishlist.giftShares.confirm'), onPress: () => setActiveEditItemPopup('giftShares') }
+                        ]
+                      );
+                    }}
+                  >
+                    <Text style={styles.modalLinkButtonText}>{i18n.t('wishlist.giftShares.showLink')}</Text>
+                  </TouchableOpacity>
+                )}
               </>
             )}
           </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {activeEditItemPopup === 'reservations' && (
+        <ReservationsScreen
+          wishlistAdminKey={currentWishlist.admin_key}
+          item={editItem}
+          namedReservationRequired={currentWishlist.named_reservation_required}
+          onBack={() => setActiveEditItemPopup(null)}
+        />
+      )}
+
+      {activeEditItemPopup === 'giftShares' && (
+        <CommentsGiftSharesScreen
+          wishlistAdminKey={currentWishlist.admin_key}
+          item={editItem}
+          onBack={() => setActiveEditItemPopup(null)}
+        />
+      )}
+
+      {/* Mobile equivalent of web's <select> 1..100 for quantity (items/_form.html.erb) — a
+          tap-to-pick list instead of a dropdown. */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showQuantityPicker}
+        onRequestClose={() => setShowQuantityPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowQuantityPicker(false)}>
+              <Text style={styles.modalCloseText}>×</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>{i18n.t('wishlist.quantity')}</Text>
+            <FlatList
+              data={QUANTITY_OPTIONS}
+              keyExtractor={(n) => n.toString()}
+              style={{ maxHeight: 320 }}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item: n }) => (
+                <TouchableOpacity
+                  style={styles.moveItemWishlistRow}
+                  onPress={() => {
+                    setEditItem({ ...editItem, quantity: n.toString() });
+                    setShowQuantityPicker(false);
+                  }}
+                >
+                  <Text style={[
+                    styles.moveItemWishlistTitle,
+                    n.toString() === editItem.quantity && { color: theme.primary },
+                  ]}>
+                    {n}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
         </View>
       </Modal>
-      
+
       <Modal
         animationType="slide"
         transparent={true}
         visible={editWishlistMode}
         onRequestClose={handleCancelWishlistEdit}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalContent}>
             <TouchableOpacity 
               style={styles.modalCloseButton}
@@ -2681,6 +3435,26 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                   </View>
                 </View>
 
+                <View style={styles.radioGroup}>
+                  <Text style={styles.editWishlistRadioTitle}>{i18n.t('wishlist.hideReservedItemsByDefaultLabel')}</Text>
+                  <View style={styles.radioOptions}>
+                    <TouchableOpacity
+                      style={styles.radioOption}
+                      onPress={() => setEditWishlist({...editWishlist, hide_reserved_items_by_default: true})}
+                    >
+                      <View style={[styles.radioCircle, editWishlist.hide_reserved_items_by_default && styles.radioSelected]} />
+                      <Text style={styles.radioText}>{i18n.t('wishlist.yes')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.radioOption}
+                      onPress={() => setEditWishlist({...editWishlist, hide_reserved_items_by_default: false})}
+                    >
+                      <View style={[styles.radioCircle, !editWishlist.hide_reserved_items_by_default && styles.radioSelected]} />
+                      <Text style={styles.radioText}>{i18n.t('wishlist.no')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
                 <View style={[styles.radioGroup, { marginBottom: 0 }]}>
                   <Text style={styles.editWishlistRadioTitle}>{i18n.t('wishlist.crawlableLabel')}</Text>
                   <View style={styles.radioOptions}>
@@ -2709,9 +3483,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                     <View style={[styles.themeSwatchCircle, styles.themeSwatchDefault, !editWishlist.theme && styles.themeSwatchSelected]} />
                     <Text style={styles.themeSwatchName}>{i18n.t('wishlist.themeDefault')}</Text>
                   </TouchableOpacity>
-                  {Object.entries(WISHLIST_COLOR_SCHEMES).map(([key, color]) => (
+                  {Object.entries(WISHLIST_THEME_COLORS).map(([key, colors]) => (
                     <TouchableOpacity key={key} style={styles.themeSwatchItem} onPress={() => setEditWishlist({...editWishlist, theme: key})}>
-                      <View style={[styles.themeSwatchCircle, { backgroundColor: color }, editWishlist.theme === key && styles.themeSwatchSelected]} />
+                      <View style={[styles.themeSwatchCircle, { backgroundColor: colors.accent }, editWishlist.theme === key && styles.themeSwatchSelected]} />
                       <Text style={styles.themeSwatchName}>{i18n.t(`wishlist.theme_${key}`)}</Text>
                     </TouchableOpacity>
                   ))}
@@ -2740,6 +3514,26 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                     </View>
                   </View>
                 )}
+
+                <View style={styles.radioGroup}>
+                  <Text style={styles.editWishlistRadioTitle}>{i18n.t('wishlist.pushNotificationsLabel')}</Text>
+                  <View style={styles.radioOptions}>
+                    <TouchableOpacity
+                      style={styles.radioOption}
+                      onPress={() => handleTogglePushNotifications(true)}
+                    >
+                      <View style={[styles.radioCircle, editWishlist.push_notifications && styles.radioSelected]} />
+                      <Text style={styles.radioText}>{i18n.t('wishlist.yes')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.radioOption}
+                      onPress={() => handleTogglePushNotifications(false)}
+                    >
+                      <View style={[styles.radioCircle, !editWishlist.push_notifications && styles.radioSelected]} />
+                      <Text style={styles.radioText}>{i18n.t('wishlist.no')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
 
                 {currentWishlist.email ? (
                   <Text style={styles.emailInfoText}>
@@ -2831,9 +3625,17 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
               <Text style={styles.deleteWishlistText}>{i18n.t('wishlist.deleteTitle')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
+
+      {/* Mirrors items_controller.rb#move_form (web) — pick which of the user's own other
+          wishlists to move this item to. Rendered here (top-level, sibling of the item detail
+          Modal below) only when NOT triggered from within that Modal — see renderMoveItemPicker
+          for why it needs a second, nested copy for that case. */}
+      {renderMoveItemPicker(!!moveItemTarget && !itemDetailMode)}
+      {performingItemActionOverlay}
       </Animated.View>
+      </GestureDetector>
       {optionsOverlay}
 
       {/* Loading overlay while fetching images */}
@@ -2922,7 +3724,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       </Modal>
 
       <Modal animationType="slide" transparent={true} visible={shareMenuVisible} onRequestClose={() => (shareSubView ? setShareSubView(null) : setShareMenuVisible(false))}>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalContent}>
             <View style={styles.shareModalTitlebar}>
               {shareSubView ? (
@@ -3077,7 +3879,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
               </ScrollView>
             )}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

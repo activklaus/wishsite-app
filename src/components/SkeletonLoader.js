@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, StyleSheet, Dimensions } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Animated, StyleSheet, Dimensions } from 'react-native';
 import { useTheme } from '../hooks/useTheme';
 import { RADIUS, cardShadow } from '../styles/shared';
 
@@ -9,33 +9,72 @@ const isTablet = width >= 768;
 const SkeletonLoader = ({ type = 'item', count = 3 }) => {
   const { theme, isDarkMode } = useTheme();
   const styles = createStyles(theme, isDarkMode);
+  const pulseAnim = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  const Box = ({ style }) => <Animated.View style={[style, { opacity: pulseAnim }]} />;
 
   const renderItemSkeleton = () => (
     <View style={styles.itemSkeleton}>
-      <View style={styles.imageSkeleton} />
+      <Box style={styles.imageSkeleton} />
       <View style={styles.contentSkeleton}>
-        <View style={styles.titleSkeleton} />
-        <View style={styles.descriptionSkeleton} />
-        <View style={styles.priceSkeleton} />
+        <Box style={styles.titleSkeleton} />
+        <Box style={styles.descriptionSkeleton} />
+        <Box style={styles.priceSkeleton} />
         <View style={styles.linksSkeleton}>
-          <View style={styles.linkSkeleton} />
-          <View style={styles.linkSkeleton} />
+          <Box style={styles.linkSkeleton} />
+          <Box style={styles.linkSkeleton} />
         </View>
       </View>
-      <View style={styles.optionsSkeleton} />
+      <Box style={styles.optionsSkeleton} />
     </View>
   );
 
   const renderHeaderSkeleton = () => (
     <View style={styles.headerSkeleton}>
-      <View style={styles.backButtonSkeleton} />
-      <View style={styles.titleHeaderSkeleton} />
-      <View style={styles.menuButtonSkeleton} />
+      <Box style={styles.backButtonSkeleton} />
+      <Box style={styles.titleHeaderSkeleton} />
+      <Box style={styles.menuButtonSkeleton} />
+    </View>
+  );
+
+  // Mirrors OwnWishlistCard's real layout (WishlistScreen.js) — avatar circle + title/meta rows —
+  // so the overview doesn't visibly jump in size once real cards replace these.
+  const renderWishlistCardSkeleton = () => (
+    <View style={styles.wishlistCardSkeleton}>
+      <Box style={styles.wishlistCardAvatar} />
+      <View style={styles.wishlistCardInfo}>
+        <Box style={styles.wishlistCardTitle} />
+        <Box style={styles.wishlistCardMeta} />
+        <Box style={styles.wishlistCardMetaSmall} />
+      </View>
     </View>
   );
 
   if (type === 'header') {
     return renderHeaderSkeleton();
+  }
+
+  if (type === 'wishlistCard') {
+    return (
+      <View style={styles.wishlistCardContainer}>
+        {Array.from({ length: count }).map((_, index) => (
+          <View key={index}>
+            {renderWishlistCardSkeleton()}
+          </View>
+        ))}
+      </View>
+    );
   }
 
   return (
@@ -136,6 +175,52 @@ const createStyles = (theme, isDarkMode) => StyleSheet.create({
     backgroundColor: theme.border,
     borderRadius: 12,
     marginLeft: isTablet ? 20 : 15,
+  },
+  // Matches WishlistScreen.js's own listContainer/card padding+spacing so the skeleton sits
+  // exactly where the real cards will appear once loaded.
+  wishlistCardContainer: {
+    padding: isTablet ? 30 : 20,
+  },
+  wishlistCardSkeleton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.surface,
+    borderRadius: RADIUS.card,
+    paddingVertical: isTablet ? 20 : 16,
+    paddingHorizontal: isTablet ? 20 : 16,
+    marginBottom: 20,
+    ...cardShadow(theme, isDarkMode),
+  },
+  wishlistCardAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: theme.border,
+  },
+  wishlistCardInfo: {
+    flex: 1,
+    marginLeft: 12,
+    paddingRight: 40,
+  },
+  wishlistCardTitle: {
+    height: isTablet ? 18 : 16,
+    backgroundColor: theme.border,
+    borderRadius: RADIUS.small,
+    marginBottom: 8,
+    width: '60%',
+  },
+  wishlistCardMeta: {
+    height: isTablet ? 12 : 11,
+    backgroundColor: theme.border,
+    borderRadius: RADIUS.small,
+    marginBottom: 6,
+    width: '40%',
+  },
+  wishlistCardMetaSmall: {
+    height: isTablet ? 12 : 11,
+    backgroundColor: theme.border,
+    borderRadius: RADIUS.small,
+    width: '50%',
   },
 });
 
