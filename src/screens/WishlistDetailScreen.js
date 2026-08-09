@@ -21,7 +21,7 @@ import { registerPushToken, unregisterPushToken } from '../services/pushNotifica
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useTheme } from '../hooks/useTheme';
-import { RADIUS, INPUT_RADIUS, cardShadow, cardStyle, BANNER_HEIGHT, AVATAR_SIZE, AVATAR_BOTTOM_OFFSET } from '../styles/shared';
+import { RADIUS, INPUT_RADIUS, cardShadow, BANNER_HEIGHT, AVATAR_SIZE, AVATAR_BOTTOM_OFFSET } from '../styles/shared';
 import { palette } from '../styles/colors';
 import Button from '../components/Button';
 import TextField from '../components/TextField';
@@ -1441,8 +1441,8 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     },
     statsSection: {
       marginHorizontal: isTablet ? 30 : 20,
+      marginTop: 20,
       marginBottom: 16,
-      ...cardStyle(theme, isDarkMode),
     },
     statsHeader: {
       ...strongStyle(isTablet ? 16 : 14),
@@ -2506,10 +2506,12 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       {/* Stand-in for the native pull-to-refresh spinner when there's a banner (see the
           refreshControl comment below) - pinned to a fixed screen position right under the
           status bar, so it's never at the mercy of how far the native gesture reveals content.
-          Shown as soon as the list is pulled down (wishlistScrollPosition goes negative during
-          overscroll, well before the native gesture actually commits to onRefresh), not just once
-          `refreshing` flips true - otherwise it only ever appeared once the pull was released. */}
-      {(refreshing || wishlistScrollPosition < -10) && hasBanner && (
+          Shown once the list is pulled down far enough to be close to where the native gesture
+          would actually commit to onRefresh (~60pt, roughly UIRefreshControl's own trigger
+          distance) - not on every small overscroll bounce (too sensitive at -10, appeared on
+          ordinary flicks/bounces and lingered through the spring-back), and not just once
+          `refreshing` flips true either - otherwise it only ever appeared once already released. */}
+      {(refreshing || wishlistScrollPosition < -60) && hasBanner && (
         <View style={styles.customRefreshIndicator} pointerEvents="none">
           <ActivityIndicator color={theme.primary} size="large" />
         </View>
