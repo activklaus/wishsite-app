@@ -18,7 +18,8 @@
     "forgotPassword": "Passwort vergessen?",
     "rememberMe": "Eingeloggt bleiben",
     "orDivider": "oder",
-    "facebookButton": "Über Facebook einloggen"
+    "facebookButton": "Über Facebook einloggen",
+    "faceIdButton": "Mit Face ID / Fingerabdruck einloggen"
   },
   "welcome": "Willkommen!",
   "logout": "Abmelden",

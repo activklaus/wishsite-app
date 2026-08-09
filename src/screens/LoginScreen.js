@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Image, Alert, ActivityIndicator } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import api from '../services/api';
@@ -9,7 +9,9 @@ import { RADIUS, cardStyle } from '../styles/shared';
 import Button from '../components/Button';
 import TextField from '../components/TextField';
 import { useFacebookLogin } from '../hooks/useFacebookLogin';
-import { facebookIcon } from '../styles/icons';
+import { facebookIcon, lockIcon } from '../styles/icons';
+import { getBiometricLockEnabled, authenticateWithBiometrics } from '../services/biometricAuth';
+import { loadSession } from '../services/session';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -23,6 +25,28 @@ const LoginScreen = ({ onLogin, onShowRegister, onShowForgotPassword }) => {
   const [unconfirmed, setUnconfirmed] = useState(false);
   const [resendingConfirmation, setResendingConfirmation] = useState(false);
   const { loginWithFacebook, loading: fbLoading } = useFacebookLogin();
+  // Set only when biometric lock is on AND a session was kept around from a previous logout
+  // (see App.tsx's handleLogout) - that's the only time this screen shows at all while a
+  // Face ID/Touch ID-recoverable login still exists to offer instead of retyping credentials.
+  const [biometricSession, setBiometricSession] = useState(null);
+  const [biometricLoading, setBiometricLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      if (!(await getBiometricLockEnabled())) return;
+      const session = await loadSession();
+      if (session) setBiometricSession(session);
+    })();
+  }, []);
+
+  const handleBiometricLogin = async () => {
+    setBiometricLoading(true);
+    const success = await authenticateWithBiometrics();
+    setBiometricLoading(false);
+    if (success) {
+      onLogin(biometricSession.user);
+    }
+  };
 
   const handleFacebookLogin = async () => {
     setError('');
@@ -184,6 +208,16 @@ const LoginScreen = ({ onLogin, onShowRegister, onShowForgotPassword }) => {
       color: '#FFFFFF',
       marginLeft: 10,
     },
+    faceIdButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    faceIdButtonText: {
+      ...strongStyle(isTablet ? 18 : 16),
+      color: theme.text,
+      marginLeft: 10,
+    },
   });
 
   return (
@@ -213,6 +247,28 @@ const LoginScreen = ({ onLogin, onShowRegister, onShowForgotPassword }) => {
         ) : null}
 
         <View style={styles.card}>
+          {biometricSession && (
+            <>
+              <Button
+                style={styles.faceIdButton}
+                variant="secondary"
+                onPress={handleBiometricLogin}
+                disabled={biometricLoading}
+                loading={biometricLoading}
+                fontSize={isTablet ? 18 : 16}
+              >
+                <SvgXml xml={lockIcon(theme.text)} width={18} height={18} />
+                <Text style={styles.faceIdButtonText}>{i18n.t('login.faceIdButton')}</Text>
+              </Button>
+
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>{i18n.t('login.orDivider')}</Text>
+                <View style={styles.dividerLine} />
+              </View>
+            </>
+          )}
+
           <View style={styles.inputContainer}>
             <Text style={styles.label}>{i18n.t('login.email')}</Text>
             <TextField

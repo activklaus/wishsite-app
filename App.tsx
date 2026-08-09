@@ -179,7 +179,7 @@ function AppContent() {
     maybeOfferBiometricSetup();
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setUser(null);
     setAuthToken(null);
     setApiAuthToken(null);
@@ -188,6 +188,12 @@ function AppContent() {
     setSelectedWishlist(null);
     setShowAccount(false);
     setIsLocked(false);
+    // Keeps the session in SecureStore when biometric lock is on, so LoginScreen can offer a
+    // Face ID/Touch ID button to sign straight back in without retyping credentials - the lock
+    // toggle is the thing actually gating re-entry here, same as it gates the app returning from
+    // the background. Without biometric lock enabled there's nothing guarding that stored
+    // session, so a plain logout has to clear it same as before.
+    if (await getBiometricLockEnabled()) return;
     clearSession();
   };
 

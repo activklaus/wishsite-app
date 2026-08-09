@@ -18,7 +18,8 @@
     "rememberMe": "Remember me",
     "forgotPassword": "Forgot password?",
     "orDivider": "or",
-    "facebookButton": "Login with Facebook"
+    "facebookButton": "Login with Facebook",
+    "faceIdButton": "Log in with Face ID / Fingerprint"
   },
   "welcome": "Welcome!",
   "logout": "Logout",
