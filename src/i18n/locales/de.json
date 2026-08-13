@@ -1,6 +1,6 @@
 {
   "login": {
-    "title": "Wishsite Login",
+    "title": "wishsite Login",
     "email": "E-Mail",
     "password": "Passwort",
     "loginButton": "Anmelden",
@@ -22,6 +22,24 @@
     "faceIdButton": "Mit Face ID / Fingerabdruck einloggen"
   },
   "welcome": "Willkommen!",
+  "onboarding": {
+    "slide1Title": "Die einfachste Art zu wünschen",
+    "slide1Subtitle": "Millionen erfüllte Wünsche, über 99% Zufriedenheit",
+    "slide2Title": "Nur wenige Klicks",
+    "slide2Subtitle": "Lege in wenigen Sekunden deine eigene wishsite an",
+    "slide3Title": "Wünsche sammeln",
+    "slide3Subtitle": "Füge so viele Wünsche hinzu wie du möchtest - egal aus welchem Shop",
+    "slide4Title": "Mit anderen teilen",
+    "slide4Subtitle": "Teile deine wishsite ganz einfach mit Familie und Freunden",
+    "continueButton": "Los geht's"
+  },
+  "language": {
+    "modalTitle": "Sprache wählen",
+    "cancel": "Abbrechen",
+    "german": "Deutsch",
+    "english": "English",
+    "menuItem": "Sprache"
+  },
   "logout": "Abmelden",
   "register": {
     "title": "Konto erstellen",
@@ -146,7 +164,7 @@
     "theme_mono": "Schwarz/Weiß",
     "reservationNoticesLabel": "Möchtest du bei jeder neuen Reservierung per E-Mail informiert werden?",
     "pushNotificationsLabel": "Möchtest du bei jeder neuen Reservierung eine Push-Benachrichtigung auf diesem Gerät erhalten?",
-    "pushNotificationsPermissionError": "Push-Benachrichtigungen konnten nicht aktiviert werden. Bitte erlaube Benachrichtigungen für Wishsite in den Geräteeinstellungen.",
+    "pushNotificationsPermissionError": "Push-Benachrichtigungen konnten nicht aktiviert werden. Bitte erlaube Benachrichtigungen für wishsite in den Geräteeinstellungen.",
     "storedEmailLabel": "Hinterlegte E-Mailadresse",
     "replaceEmail": "(ändern)",
     "addEmail": "E-Mailadresse hinterlegen für diese wishsite",
@@ -207,6 +225,9 @@
     "removeAvatarConfirmMessage": "Möchtest du das Profilbild wirklich entfernen?",
     "cropBackgroundTitle": "Hintergrund zuschneiden",
     "cropAvatarTitle": "Profilbild zuschneiden",
+    "changeItemImageLink": "Bild ändern",
+    "cropItemImageLink": "Bild zuschneiden",
+    "cropItemTitle": "Bild zuschneiden",
     "cropHint": "Zum Verschieben ziehen, mit zwei Fingern zoomen",
     "cropSaveError": "Zuschneiden fehlgeschlagen",
     "imageUploadError": "Bild konnte nicht hochgeladen werden",
@@ -351,11 +372,11 @@
   "biometricLock": {
     "settingLabel": "Face ID / Fingerabdruck",
     "settingHint": "Sperrt die App, wenn du sie aus dem Hintergrund zurückholst, bis du dich erneut erkennst.",
-    "title": "Wishsite ist gesperrt",
+    "title": "wishsite ist gesperrt",
     "subtitle": "Entsperre die App mit Face ID oder Fingerabdruck.",
     "failedSubtitle": "Erkennung fehlgeschlagen. Versuch es nochmal.",
     "unlockButton": "Entsperren",
-    "promptMessage": "Entsperre Wishsite",
+    "promptMessage": "Entsperre wishsite",
     "cancel": "Abbrechen",
     "setupPromptTitle": "Face ID / Fingerabdruck aktivieren?",
     "setupPromptMessage": "Schütze deine wishsites auf diesem Gerät zusätzlich mit Face ID oder Fingerabdruck.",

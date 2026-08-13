@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Image, ScrollView, RefreshControl, Linking, Animated, Alert } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { useAnimatedRef } from 'react-native-reanimated';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Image, RefreshControl, Linking, Alert, Platform } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
+import Animated, { useAnimatedRef, useAnimatedStyle, useSharedValue, withTiming, withSpring, runOnJS } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import i18n from '../i18n';
 import { headingStyle, bodyStyle } from '../styles/fonts';
@@ -15,16 +15,62 @@ import { editIcon, duplicateIcon, moveIcon, deleteIcon } from '../styles/icons';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
+// Same "never upscale past natural size, only cap it" rule as WishlistItem.js's list thumbnail
+// (mirrors wishsite3's .item-image-frame img max-width/max-height) - just a bigger box, matching
+// this screen's own content padding/previous fixed image height.
+const ITEM_DETAIL_IMAGE_MAX_WIDTH = width - 2 * (isTablet ? 30 : 20);
+const ITEM_DETAIL_IMAGE_MAX_HEIGHT = isTablet ? 250 : 200;
 
-const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharable, namedReservationRequired, onDuplicate, onMove, onDelete, refreshing, onRefresh }) => {
+const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharable, namedReservationRequired, onDuplicate, onMove, onDelete, onChangeImagePress, refreshing, onRefresh }) => {
   const { theme, isDarkMode } = useTheme();
   const insets = useSafeAreaInsets();
   const hasImage = !!item.image_url;
+  // Natural size capped at ITEM_DETAIL_IMAGE_MAX_WIDTH/HEIGHT, never upscaled - null (unknown
+  // yet, or no image) falls back to filling the frame like before.
+  const [imageSize, setImageSize] = useState(null);
+
+  useEffect(() => {
+    if (!item.image_url) {
+      setImageSize(null);
+      return;
+    }
+    let cancelled = false;
+    Image.getSize(
+      item.image_url,
+      (naturalWidth, naturalHeight) => {
+        if (cancelled || !naturalWidth || !naturalHeight) return;
+        const scale = Math.min(1, ITEM_DETAIL_IMAGE_MAX_WIDTH / naturalWidth, ITEM_DETAIL_IMAGE_MAX_HEIGHT / naturalHeight);
+        setImageSize({
+          width: Math.round(naturalWidth * scale),
+          height: Math.round(naturalHeight * scale),
+        });
+      },
+      () => { if (!cancelled) setImageSize(null); }
+    );
+    return () => { cancelled = true; };
+  }, [item.image_url]);
   // Mirrors web's showPopup() always removing any existing #popup first — only one of these can
   // be open at a time, opening one replaces the other instead of stacking.
   const [activePopup, setActivePopup] = useState(null); // null | 'reservations' | 'giftShares'
-  const slideAnim = useRef(new Animated.Value(width)).current;
+  const slideAnim = useSharedValue(width);
+  const animatedContainerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: slideAnim.value }],
+  }));
   const scrollRef = useAnimatedRef();
+  // Declared before swipeBackGesture below (not just called from it) - Reanimated's worklet
+  // closure capture grabs referenced outer variables at gesture-creation time, and a `const`
+  // declared later in this same component body is still in its temporal dead zone at that point.
+  // Calling runOnJS(handleBack) while it's in that state doesn't throw immediately; it silently
+  // captures an unresolved reference that only blows up ("Cannot read property
+  // '__remoteFunction' of undefined") later when the worklet actually invokes it - i.e. exactly
+  // when a swipe past the threshold tries to call it.
+  const handleBack = () => {
+    slideAnim.value = withTiming(width, { duration: 300 }, (finished) => {
+      if (finished) {
+        runOnJS(onBack)();
+      }
+    });
+  };
   // Gesture.Pan() instead of PanResponder: a plain PanResponder loses the touch negotiation
   // against the ScrollView below for any drag starting over it, so swipe-back only worked when
   // started right over the header. activeOffsetX/failOffsetY let this coexist with the
@@ -33,33 +79,42 @@ const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharabl
   // without it, this Pan gesture intercepts the initial touch before the ScrollView's native
   // RefreshControl gesture recognizer gets a chance to, even though this one fails moments later
   // for a vertical drag — the refresh spinner just never appears.
+  // ScrollView here is deliberately gesture-handler's own (not React Native's) so
+  // simultaneousWithExternalGesture below has a real gesture handler to negotiate with on
+  // Android, where a bare RN ScrollView isn't part of RNGH's gesture arena the way it is on iOS.
+  //
+  // On Android, this gesture was reported to only "win" the touch when a swipe started right at
+  // the screen edge. Investigated live via an Android emulator (adb + on-screen debug output):
+  // this gesture's onTouchesDown never fires ANYWHERE, edge included — what looked like "edge
+  // works" is actually Android's own predictive-back gesture (confirmed via
+  // DisplayBackGestureHandler in the system log) closing the surrounding <Modal> through its
+  // onRequestClose prop (WishlistDetailScreen.js), which is RN Modal's built-in back-dismiss
+  // behavior on Android - entirely unrelated to this gesture. So mid-screen was never worse than
+  // the edge; this gesture appears not to receive touches via synthetic input at all on this
+  // setup. Rewritten on shared values so onUpdate/onEnd run natively on the UI thread (matching
+  // the ScrollView's own gesture) rather than bouncing every touch-move through the JS thread via
+  // .runOnJS(true) as before - a legitimate improvement either way, but flagged here since it
+  // could not be confirmed to fix the underlying report given the finding above. Needs a real
+  // device/finger check, not just the emulator's synthetic swipes.
   const swipeBackGesture = Gesture.Pan()
-    .activeOffsetX(15)
-    .failOffsetY([-15, 15])
+    .activeOffsetX(8)
+    .failOffsetY([-40, 40])
     .simultaneousWithExternalGesture(scrollRef)
     .onUpdate((e) => {
       if (e.translationX > 0) {
-        slideAnim.setValue(e.translationX);
+        slideAnim.value = e.translationX;
       }
     })
     .onEnd((e) => {
       if (e.translationX > width * 0.3) {
-        handleBack();
+        runOnJS(handleBack)();
       } else {
-        Animated.spring(slideAnim, {
-          toValue: 0,
-          useNativeDriver: true,
-        }).start();
+        slideAnim.value = withSpring(0);
       }
-    })
-    .runOnJS(true);
+    });
 
   useEffect(() => {
-    Animated.timing(slideAnim, {
-      toValue: 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
+    slideAnim.value = withTiming(0, { duration: 300 });
   }, []);
 
   const handleShowCommentsGiftShares = () => {
@@ -82,16 +137,6 @@ const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharabl
         { text: i18n.t('wishlist.reservations.confirm'), onPress: () => setActivePopup('reservations') }
       ]
     );
-  };
-
-  const handleBack = () => {
-    Animated.timing(slideAnim, {
-      toValue: width,
-      duration: 300,
-      useNativeDriver: true,
-    }).start(() => {
-      onBack();
-    });
   };
 
   const styles = StyleSheet.create({
@@ -131,6 +176,10 @@ const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharabl
       fontSize: 22,
       color: theme.text,
       fontWeight: 'bold',
+      // Android-only: it adds extra vertical font padding by default that pushes glyphs like
+      // this one below true center within the circle, even with the parent's flex centering -
+      // iOS never had this offset, and forcing the same lineHeight there shifted it too high.
+      ...(Platform.OS === 'android' ? { lineHeight: 22, includeFontPadding: false, textAlignVertical: 'center' } : null),
     },
     content: {
       flex: 1,
@@ -140,11 +189,36 @@ const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharabl
       paddingTop: isTablet ? 12 : 8,
       paddingBottom: isTablet ? 60 : 45,
     },
-    itemImage: {
+    // Fixed-size white frame regardless of the actual image's (never-upscaled) natural size -
+    // otherwise a small source image would shrink this whole area down with it instead of
+    // sitting centered in a normal-looking image slot.
+    itemImageWrapper: {
+      position: 'relative',
       width: '100%',
       height: isTablet ? 250 : 200,
-      borderRadius: RADIUS.card,
       marginBottom: isTablet ? 20 : 15,
+      backgroundColor: theme.surface,
+      borderRadius: RADIUS.card,
+      overflow: 'hidden',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    itemImage: {
+      width: '100%',
+      height: '100%',
+    },
+    // Mirrors .item-img-menu-toggler (lists_and_items.scss): a small dark circular button
+    // pinned to the image's top-right corner.
+    changeImageButton: {
+      position: 'absolute',
+      top: 10,
+      right: 10,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: 'rgba(0, 0, 0, 0.45)',
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     // Mirrors wishsite3's .admin-item-toolbar-detailed (controllers/wishlist.scss) — a centered
     // row of circular icon buttons above the title (delete/move/duplicate/edit on web).
@@ -211,9 +285,15 @@ const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharabl
   });
 
   return (
-    <>
+    // This screen is only ever rendered inside a <Modal> (WishlistDetailScreen.js), which on
+    // Android renders its content in a separate native window/Dialog outside the app's single
+    // root-level GestureHandlerRootView (App.tsx) - gestures inside it silently receive no
+    // touches at all there without their own nested GestureHandlerRootView. iOS doesn't need
+    // this (its Modal implementation doesn't split the touch dispatch chain the same way), but
+    // wrapping unconditionally is harmless there.
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <GestureDetector gesture={swipeBackGesture}>
-      <Animated.View style={[styles.container, { transform: [{ translateX: slideAnim }] }]}>
+      <Animated.View style={[styles.container, animatedContainerStyle]}>
       {hasImage ? (
         <TouchableOpacity style={[styles.backButton, styles.backButtonFloating]} onPress={handleBack}>
           <Text style={styles.backButtonText}>←</Text>
@@ -235,11 +315,19 @@ const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharabl
         }
       >
         {item.image_url && (
-          <Image
-            source={{ uri: item.image_url }}
-            style={styles.itemImage}
-            resizeMode="cover"
-          />
+          <View style={styles.itemImageWrapper}>
+            <Image
+              source={{ uri: item.image_url }}
+              style={imageSize || styles.itemImage}
+              resizeMode="contain"
+            />
+            {/* Mirrors .item-img-menu-toggler (app/views/items/_show.html.erb) - opens the
+                change/crop image action sheet, see handleChangeItemImagePress in
+                WishlistDetailScreen.js. */}
+            <TouchableOpacity style={styles.changeImageButton} onPress={onChangeImagePress}>
+              <SvgXml xml={editIcon('#FFFFFF')} width={16} height={16} />
+            </TouchableOpacity>
+          </View>
         )}
 
         <View style={styles.adminToolbar}>
@@ -323,7 +411,7 @@ const ItemDetailScreen = ({ item, onBack, onEdit, wishlistAdminKey, itemsSharabl
           onBack={() => setActivePopup(null)}
         />
       )}
-    </>
+    </GestureHandlerRootView>
   );
 };
 

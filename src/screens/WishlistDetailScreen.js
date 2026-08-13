@@ -1,7 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Dimensions, Modal, TextInput, Alert, ScrollView, Image, Animated, Linking, ActivityIndicator, Share, Platform, KeyboardAvoidingView, RefreshControl } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Dimensions, Modal, TextInput, Alert, ScrollView, Image, Animated, Linking, ActivityIndicator, Share, Platform, KeyboardAvoidingView, RefreshControl as RNRefreshControl } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, RefreshControl as GHRefreshControl } from 'react-native-gesture-handler';
+
+// The RefreshControl class needs to differ by platform for this DraggableFlatList (see its
+// refreshControl prop below): iOS needs React Native's own, because gesture-handler's wraps the
+// native UIRefreshControl in an extra NativeViewGestureHandler view that breaks iOS's
+// RCTScrollView native z-order/inset handling for it (spinner rendered behind the banner
+// instead of pinned above it). Android needs the opposite - gesture-handler's own, because a
+// plain RN RefreshControl's pull gesture doesn't properly participate in RNGH's touch arena
+// there alongside DraggableFlatList's own internal drag gesture, and silently never activates.
+const RefreshControl = Platform.OS === 'ios' ? RNRefreshControl : GHRefreshControl;
 import { useAnimatedRef } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import i18n from '../i18n';
@@ -876,9 +885,78 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   };
 
   const handleCropSaved = (newUrl) => {
+    if (cropSession.mode === 'item') {
+      // The item's image_url is derived (resolved_item_image_url, api/v1/item_images_controller.rb)
+      // rather than a single field on currentWishlist - just re-fetch that one item instead of
+      // patching newUrl in by hand.
+      refreshSingleItem(cropSession.itemId);
+      setCropSession(null);
+      return;
+    }
     const field = cropSession.mode === 'avatar' ? 'user_image_url' : 'background_image_url';
     setCurrentWishlist(prev => ({ ...prev, [field]: newUrl }));
     setCropSession(null);
+  };
+
+  // Mirrors wishsite3's item image edit/crop flyout (app/views/items/_show.html.erb) - "change
+  // image" always available, "crop image" only once an image exists to crop.
+  const pickAndUploadItemImage = async (item) => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(i18n.t('wishlist.permissionRequiredTitle'), i18n.t('wishlist.photoPermissionMessage'));
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 1,
+    });
+    if (result.canceled || !result.assets?.length) return;
+
+    const asset = result.assets[0];
+    setUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', {
+        uri: asset.uri,
+        name: asset.fileName || 'upload.jpg',
+        type: asset.mimeType || 'image/jpeg',
+      });
+      const { data } = await api.patch(`/wishlists/${currentWishlist.admin_key}/items/${item.id}/image`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setCropSession({ mode: 'item', itemId: item.id, imageUri: data.image_url });
+    } catch (error) {
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.imageUploadError'));
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const openCropExistingItemImage = async (item) => {
+    try {
+      const { data } = await api.get(`/wishlists/${currentWishlist.admin_key}/items/${item.id}/image/edit`);
+      const initialCrop = data.image_crop_w && data.image_crop_h
+        ? { x: Number(data.image_crop_x) || 0, y: Number(data.image_crop_y) || 0, w: Number(data.image_crop_w), h: Number(data.image_crop_h) }
+        : null;
+      setCropSession({ mode: 'item', itemId: item.id, imageUri: data.image_url, initialCrop });
+    } catch (error) {
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.imageUploadError'));
+    }
+  };
+
+  const handleChangeItemImagePress = (item) => {
+    const buttons = [
+      { text: i18n.t('wishlist.changeItemImageLink'), onPress: () => pickAndUploadItemImage(item) },
+    ];
+    if (item.image_url) {
+      buttons.push({
+        text: i18n.t('wishlist.cropItemImageLink'),
+        onPress: () => openCropExistingItemImage(item),
+      });
+    }
+    buttons.push({ text: i18n.t('wishlist.cancel'), style: 'cancel' });
+    Alert.alert(i18n.t('wishlist.changeItemImageLink'), null, buttons);
   };
 
   const imageActionLabel = (mode) => {
@@ -1175,6 +1253,10 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       fontSize: 22,
       color: theme.text,
       fontWeight: 'bold',
+      // Android-only: it adds extra vertical font padding by default that pushes glyphs like
+      // this one below true center within the circle, even with the parent's flex centering -
+      // iOS never had this offset, and forcing the same lineHeight there shifted it too high.
+      ...(Platform.OS === 'android' ? { lineHeight: 22, includeFontPadding: false, textAlignVertical: 'center' } : null),
     },
     // Stand-in for the native pull-to-refresh spinner when a banner is present - see the
     // refreshControl/customRefreshIndicator comments where this is used.
@@ -1552,6 +1634,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       fontSize: 26,
       color: theme.text,
       fontWeight: 'bold',
+      ...(Platform.OS === 'android' ? { lineHeight: 26, includeFontPadding: false, textAlignVertical: 'center' } : null),
     },
     shareSubViewTitle: {
       ...headingStyle(isTablet ? 18 : 16),
@@ -2154,6 +2237,12 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       overflow: 'hidden',
       position: 'relative',
     },
+    // Centers a natural-size (capped, never upscaled) image within the fixed frame above -
+    // see MAX_ITEM_IMAGE_SIZE/imageSize in WishlistItem.js.
+    itemImageWrapperCentered: {
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
     itemImage: {
       width: '100%',
       height: '100%',
@@ -2663,12 +2752,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             // shorthand — the underlying FlatList here is gesture-handler's wrapper (see
             // react-native-draggable-flatlist's AnimatedFlatList), which doesn't auto-construct a
             // RefreshControl from the shorthand props the way RN's own FlatList does.
-            // Deliberately React Native's own RefreshControl here, NOT gesture-handler's:
-            // gesture-handler's version (createNativeWrapper) wraps the native UIRefreshControl
-            // inside an extra NativeViewGestureHandler view, which breaks iOS's RCTScrollView
-            // native z-order/inset handling for it (no longer recognized as a real
-            // UIRefreshControl). ItemDetailScreen's plain ScrollView never hit the same issue.
-            // When there's a banner, the native spinner still only reveals a sliver right at the
+            // The RefreshControl class itself (RN's vs gesture-handler's) differs by platform -
+            // see the import comment above for why.
+            // When there's a banner, the iOS native spinner still only reveals a sliver right at the
             // banner's own top edge — not enough room appears above it for the full spinner to
             // clear, so it reads as "hidden behind the banner". Rather than fight that (an
             // attempt to force extra room via a permanent content offset caused the list to
@@ -3097,6 +3183,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             onDuplicate={handleDuplicateItem}
             onMove={handleOpenMoveItem}
             onDelete={handleDeleteItem}
+            onChangeImagePress={() => handleChangeItemImagePress(selectedItem)}
             refreshing={itemRefreshing}
             onRefresh={async () => {
               if (!selectedItem) return;
@@ -3717,6 +3804,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
           <ImageCropScreen
             mode={cropSession.mode}
             wishlistId={currentWishlist.admin_key}
+            itemId={cropSession.itemId}
             imageUri={cropSession.imageUri}
             initialCrop={cropSession.initialCrop}
             onCancel={() => setCropSession(null)}

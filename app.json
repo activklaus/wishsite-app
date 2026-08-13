@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Wishsite",
+    "name": "wishsite",
     "slug": "wishsiteapp",
     "version": "1.0.0",
     "scheme": "net.wishsite.app",
@@ -24,7 +24,7 @@
           "NSAllowsArbitraryLoads": false,
           "NSAllowsLocalNetworking": true
         },
-        "NSFaceIDUsageDescription": "Wishsite nutzt Face ID, um deine wishsites vor fremdem Zugriff auf diesem Gerät zu schützen."
+        "NSFaceIDUsageDescription": "wishsite nutzt Face ID, um deine wishsites vor fremdem Zugriff auf diesem Gerät zu schützen."
       }
     },
     "android": {
@@ -42,13 +42,13 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Wishsite benötigt Zugriff auf deine Fotos, um ein Hintergrund- oder Profilbild für deine wishsite auszuwählen."
+          "photosPermission": "wishsite benötigt Zugriff auf deine Fotos, um ein Hintergrund- oder Profilbild für deine wishsite auszuwählen."
         }
       ],
       [
         "expo-media-library",
         {
-          "savePhotosPermission": "Wishsite benötigt Zugriff auf deine Fotos, um den QR-Code zu speichern.",
+          "savePhotosPermission": "wishsite benötigt Zugriff auf deine Fotos, um den QR-Code zu speichern.",
           "isAccessMediaLocationEnabled": false
         }
       ],

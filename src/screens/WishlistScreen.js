@@ -102,10 +102,15 @@ const OwnWishlistCard = ({ item, theme, isDarkMode, onSelect, onEdit, onDelete, 
       ...bodyStyle(isTablet ? 12 : 11),
       color: theme.textSecondary,
       marginBottom: 2,
+      // Android-only: default font padding pads the Text's box beyond its visible glyphs, so
+      // metaRow's alignItems:'center' below centers that padded box instead of the actual text -
+      // the icon next to it ends up visibly higher than the text. iOS doesn't have this offset.
+      ...(Platform.OS === 'android' ? { includeFontPadding: false, textAlignVertical: 'center', lineHeight: isTablet ? 14 : 13 } : null),
     },
     metaSmall: {
       ...bodyStyle(isTablet ? 12 : 11),
       color: theme.textMuted,
+      ...(Platform.OS === 'android' ? { includeFontPadding: false, textAlignVertical: 'center', lineHeight: isTablet ? 14 : 13 } : null),
     },
     metaRow: {
       flexDirection: 'row',
@@ -602,6 +607,9 @@ const WishlistScreen = ({ onLogout, authToken, onWishlistSelect, onAccountPress 
     // literal 30 rendered as a much more exaggerated pill - scaled down here to match the same
     // *proportional* rounding instead of the same raw number.
     sortButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
       paddingVertical: 6,
       paddingHorizontal: 14,
       borderWidth: 1,
@@ -615,6 +623,20 @@ const WishlistScreen = ({ onLogout, authToken, onWishlistSelect, onAccountPress 
     sortButtonText: {
       ...bodyStyle(isTablet ? 14 : 12),
       color: theme.link,
+    },
+    // Plain border-trick triangle (not a text glyph) so it renders crisp and identically
+    // positioned on both platforms, unlike "▾" which needs platform-specific vertical-centering
+    // fixes (see WishlistDetailScreen.js's back-arrow glyphs) - marks the button as a dropdown.
+    sortButtonCaret: {
+      width: 0,
+      height: 0,
+      borderLeftWidth: 4,
+      borderRightWidth: 4,
+      borderTopWidth: 5,
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent',
+      borderTopColor: theme.link,
+      marginTop: 2,
     },
     sortPickerOption: {
       flexDirection: 'row',
@@ -791,6 +813,7 @@ const WishlistScreen = ({ onLogout, authToken, onWishlistSelect, onAccountPress 
               <View style={styles.sortRow}>
                 <TouchableOpacity style={styles.sortButton} onPress={() => setShowSortPicker(true)}>
                   <Text style={styles.sortButtonText}>{i18n.t(SORT_LABEL_KEYS[sortOption])}</Text>
+                  <View style={styles.sortButtonCaret} />
                 </TouchableOpacity>
               </View>
             )}

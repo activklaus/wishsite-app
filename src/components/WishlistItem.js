@@ -1,7 +1,21 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Image, TouchableOpacity, Dimensions } from 'react-native';
+// react-native-gesture-handler's own TouchableOpacity, not react-native's - this row's long-press
+// (onDrag below) needs to compete for the touch arena against WishlistDetailScreen's screen-wide
+// swipeBackGesture (a Gesture.Pan()) and DraggableFlatList's own internal reorder Gesture.Pan().
+// A plain RN Touchable isn't part of that arena at all, so on Android its long-press can get
+// starved by the ancestor Pan gesture's native touch interception before it ever fires.
+// Only used for the row itself, not the options button below - its onPress callback doesn't
+// receive a full RN SyntheticEvent (no e.stopPropagation()/e.nativeEvent.pageX,Y), which that
+// button relies on.
+import { TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
 import { SvgXml } from 'react-native-svg';
 import { lockIcon, hiddenIcon, dragHandleIcon } from '../styles/icons';
+
+// Matches the .item-image-frame img max-width/max-height breakpoints (lists_and_items.scss) -
+// the web never upscales a wish image past its natural size, it only caps it at this box size.
+const isTablet = Dimensions.get('window').width >= 768;
+const MAX_ITEM_IMAGE_SIZE = isTablet ? 140 : 100;
 
 const WishlistItem = ({
   item,
@@ -17,6 +31,32 @@ const WishlistItem = ({
   onOptionsPress,
   styles
 }) => {
+  // Natural size capped at MAX_ITEM_IMAGE_SIZE, never upscaled - null (unknown yet, or no
+  // image_url) falls back to filling the frame like before, matching Image.getSize's own
+  // (network round-trip) latency without a layout flash.
+  const [imageSize, setImageSize] = useState(null);
+
+  useEffect(() => {
+    if (!item.image_url) {
+      setImageSize(null);
+      return;
+    }
+    let cancelled = false;
+    Image.getSize(
+      item.image_url,
+      (naturalWidth, naturalHeight) => {
+        if (cancelled || !naturalWidth || !naturalHeight) return;
+        const scale = Math.min(1, MAX_ITEM_IMAGE_SIZE / naturalWidth, MAX_ITEM_IMAGE_SIZE / naturalHeight);
+        setImageSize({
+          width: Math.round(naturalWidth * scale),
+          height: Math.round(naturalHeight * scale),
+        });
+      },
+      () => { if (!cancelled) setImageSize(null); }
+    );
+    return () => { cancelled = true; };
+  }, [item.image_url]);
+
   return (
     <View style={[styles.itemCard, item.hidden && styles.itemCardHidden, isActive && styles.itemCardActive]}>
       <View style={styles.optionsContainer}>
@@ -37,17 +77,17 @@ const WishlistItem = ({
         )}
       </View>
 
-      <TouchableOpacity
+      <GHTouchableOpacity
         style={styles.itemContent}
         onPress={() => onItemPress(item)}
         onLongPress={onDrag}
         delayLongPress={200}
       >
-        <View style={styles.itemImageWrapper}>
+        <View style={[styles.itemImageWrapper, styles.itemImageWrapperCentered]}>
           <Image
             source={item.image_url ? { uri: item.image_url } : require('../../assets/placeholder.png')}
-            style={styles.itemImage}
-            resizeMode="cover"
+            style={item.image_url && imageSize ? imageSize : styles.itemImage}
+            resizeMode="contain"
           />
           {item.hidden && (
             <View style={styles.hiddenImageOverlay}>
@@ -86,7 +126,11 @@ const WishlistItem = ({
                   style={styles.itemLinkFavicon}
                 />
               )}
-              <Text style={styles.itemLinkText} numberOfLines={1} ellipsizeMode="middle">
+              {/* display_name (link.full_link_display, wishsite3) is already truncated
+                  server-side with a trailing "..." - ellipsizeMode="tail" here keeps any
+                  further RN-side truncation on that same end instead of also cutting into
+                  the middle, which produced two separate ellipses on longer links. */}
+              <Text style={styles.itemLinkText} numberOfLines={1} ellipsizeMode="tail">
                 {item.links[0].display_name || item.links[0].url}
               </Text>
               {item.links.length > 1 && (
@@ -95,7 +139,7 @@ const WishlistItem = ({
             </View>
           )}
         </View>
-      </TouchableOpacity>
+      </GHTouchableOpacity>
 
       {/* Mirrors #items.sortable-mode li.item .drag-handle (controllers/wishlist.scss) — a
           darkened, blurred-feeling overlay with a grab icon, shown for as long as this exact

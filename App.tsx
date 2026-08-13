@@ -28,11 +28,21 @@ import {
   setAskedBiometricPrompt,
 } from './src/services/biometricAuth';
 import { saveSession, loadSession, clearSession } from './src/services/session';
+import { LocaleProvider, loadStoredLocale, useLocale } from './src/hooks/useLocale';
+import { logLogin, logScreenView } from './src/services/analytics';
 import './src/services/pushNotifications';
 import { useState, useEffect, useRef } from 'react';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
+
+// Forces a full remount of the screen stack whenever the language changes, so every already-
+// mounted screen re-evaluates its i18n.t() calls - mutating the shared i18n.locale alone doesn't
+// trigger React re-renders on its own (see useLocale.js).
+function AppShell() {
+  const { locale } = useLocale();
+  return <AppContent key={locale} />;
+}
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -41,12 +51,25 @@ function App() {
     'Montserrat-Bold': require('./src/assets/fonts/Montserrat-Bold.ttf'),
     'MontserratAlternates-Bold': require('./src/assets/fonts/MontserratAlternates-Bold.ttf'),
   });
+  const [localeLoaded, setLocaleLoaded] = useState(false);
+
+  useEffect(() => {
+    loadStoredLocale().finally(() => setLocaleLoaded(true));
+  }, []);
+
+  const ready = fontsLoaded && localeLoaded;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-        {fontsLoaded ? <AppContent /> : <LoadingScreen />}
+        {ready ? (
+          <LocaleProvider>
+            <AppShell />
+          </LocaleProvider>
+        ) : (
+          <LoadingScreen />
+        )}
         <OfflineBanner />
         <Toast />
       </SafeAreaProvider>
@@ -166,6 +189,7 @@ function AppContent() {
     saveSession(userData, token);
     sessionExpiredHandledRef.current = false;
     maybeOfferBiometricSetup();
+    logLogin();
   };
 
   const handleRegister = (userData) => {
@@ -226,6 +250,29 @@ function AppContent() {
     setShowShareForm(false);
     setShareData(null);
   };
+
+  // Mirrors the branching below exactly, so "page views" cover every screen this component can
+  // render - kept as a hook (not inline in the JSX) because it has to run on every render,
+  // unconditionally, same as the early returns right after it need to stay hooks-free themselves.
+  const currentScreen = isLoading
+    ? 'Loading'
+    : isLocked && user
+    ? 'BiometricLock'
+    : showWelcome && !user
+    ? 'Welcome'
+    : !user
+    ? (showForgotPassword ? 'ForgotPassword' : showRegister ? 'Register' : 'Login')
+    : showAccount
+    ? 'Account'
+    : showShareForm
+    ? 'ShareForm'
+    : selectedWishlist
+    ? 'WishlistDetail'
+    : 'WishlistOverview';
+
+  useEffect(() => {
+    logScreenView(currentScreen);
+  }, [currentScreen]);
 
   if (isLoading) {
     return <LoadingScreen />;

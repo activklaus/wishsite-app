@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { View, Image, StyleSheet, TouchableOpacity, Text, Dimensions, TouchableWithoutFeedback } from 'react-native';
+import { View, Image, StyleSheet, TouchableOpacity, Text, Dimensions, TouchableWithoutFeedback, Modal } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { strongStyle } from '../styles/fonts';
+import { headingStyle, bodyStyle, strongStyle } from '../styles/fonts';
 import { useTheme } from '../hooks/useTheme';
+import { useLocale } from '../hooks/useLocale';
 import { RADIUS } from '../styles/shared';
 import { accountIcon, logoutIcon } from '../styles/icons';
 import AnimatedMenu from './AnimatedMenu';
+import Button from './Button';
 import i18n from '../i18n';
 
 const { width } = Dimensions.get('window');
@@ -14,7 +16,14 @@ const isTablet = width >= 768;
 
 const ScreenWrapper = ({ children, onLogout, showMenu = false, onLogoPress, onNewWishlist, showBackArrow = false, hideBottomBar = false, onAccountPress }) => {
   const { theme } = useTheme();
+  const { locale, setLocale } = useLocale();
   const [menuVisible, setMenuVisible] = useState(false);
+  const [languageModalVisible, setLanguageModalVisible] = useState(false);
+
+  const handleLanguageSelect = (language) => {
+    setLocale(language);
+    setLanguageModalVisible(false);
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -71,6 +80,18 @@ const ScreenWrapper = ({ children, onLogout, showMenu = false, onLogoPress, onNe
                   style={styles.menuItem}
                   onPress={() => {
                     setMenuVisible(false);
+                    setLanguageModalVisible(true);
+                  }}
+                >
+                  <View style={styles.menuItemContent}>
+                    <Text style={styles.menuItemFlagText}>{locale === 'en' ? '🇺🇸' : '🇩🇪'}</Text>
+                    <Text style={[styles.menuItemText, { color: theme.text }]}>{i18n.t('language.menuItem')}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setMenuVisible(false);
                     onLogout && onLogout();
                   }}
                 >
@@ -98,6 +119,44 @@ const ScreenWrapper = ({ children, onLogout, showMenu = false, onLogoPress, onNe
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Mirrors the language picker on WelcomeScreen.js - same layout/copy, so switching
+          language after login looks and behaves like the one during onboarding. */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={languageModalVisible}
+        onRequestClose={() => setLanguageModalVisible(false)}
+      >
+        <View style={styles.languageModalOverlay}>
+          <View style={[styles.languageModalContent, { backgroundColor: theme.surface }]}>
+            <Text style={[styles.languageModalTitle, { color: theme.text }]}>{i18n.t('language.modalTitle')}</Text>
+
+            <TouchableOpacity
+              style={[styles.languageOption, { borderBottomColor: theme.border }]}
+              onPress={() => handleLanguageSelect('de')}
+            >
+              <Text style={styles.languageOptionFlag}>🇩🇪</Text>
+              <Text style={[styles.languageOptionText, { color: theme.text }]}>{i18n.t('language.german')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.languageOption, { borderBottomColor: theme.border }]}
+              onPress={() => handleLanguageSelect('en')}
+            >
+              <Text style={styles.languageOptionFlag}>🇺🇸</Text>
+              <Text style={[styles.languageOptionText, { color: theme.text }]}>{i18n.t('language.english')}</Text>
+            </TouchableOpacity>
+
+            <Button
+              style={styles.languageCancelButton}
+              variant="secondary"
+              onPress={() => setLanguageModalVisible(false)}
+              title={i18n.t('language.cancel')}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -168,7 +227,10 @@ const styles = StyleSheet.create({
   menuItemText: {
     ...strongStyle(isTablet ? 16 : 14),
   },
-
+  menuItemFlagText: {
+    fontSize: isTablet ? 18 : 16,
+    marginRight: 10,
+  },
   menuOverlay: {
     position: 'fixed',
     top: 0,
@@ -217,6 +279,42 @@ const styles = StyleSheet.create({
     fontSize: isTablet ? 28 : 24,
     color: 'white',
     fontWeight: 'bold',
+  },
+  languageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  languageModalContent: {
+    borderRadius: RADIUS.card,
+    padding: 20,
+    width: '80%',
+    maxWidth: 300,
+  },
+  languageModalTitle: {
+    ...headingStyle(isTablet ? 20 : 18),
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  languageOption: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 15,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+  },
+  languageOptionFlag: {
+    fontSize: isTablet ? 18 : 16,
+  },
+  languageOptionText: {
+    ...bodyStyle(isTablet ? 18 : 16),
+    textAlign: 'center',
+  },
+  languageCancelButton: {
+    marginTop: 15,
   },
 });
 

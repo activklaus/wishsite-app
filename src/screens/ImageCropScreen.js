@@ -9,10 +9,13 @@ import { BANNER_HEIGHT, AVATAR_SIZE } from '../styles/shared';
 import ImageCropper from '../components/ImageCropper';
 
 const { width } = Dimensions.get('window');
+// Square crop frame for an item's own image (api/v1/item_images_controller.rb) - comfortably
+// large but capped so it still fits short/small-screen devices with room for the header/hint.
+const ITEM_CROP_FRAME_SIZE = Math.min(width - 80, 320);
 
-// Mirrors wishsite3's background_image/user_image "update with crop_x/y/w/h/ratio" endpoints
-// (app/controllers/api/v1/background_images_controller.rb, app/controllers/api/v1/user_images_controller.rb).
-const ImageCropScreen = ({ mode, wishlistId, imageUri, initialCrop, onCancel, onSaved }) => {
+// Mirrors wishsite3's background_image/user_image/item image "update with crop_x/y/w/h/ratio"
+// endpoints (app/controllers/api/v1/{background_images,user_images,item_images}_controller.rb).
+const ImageCropScreen = ({ mode, wishlistId, itemId, imageUri, initialCrop, onCancel, onSaved }) => {
   const { theme } = useTheme();
   // Rendered inside a <Modal> (separate native presentation), where SafeAreaView's automatic
   // inset padding is unreliable — read insets explicitly and pad the header ourselves instead.
@@ -20,9 +23,10 @@ const ImageCropScreen = ({ mode, wishlistId, imageUri, initialCrop, onCancel, on
   const [saving, setSaving] = useState(false);
   const cropperRef = useRef(null);
   const isAvatar = mode === 'avatar';
+  const isItem = mode === 'item';
 
-  const frameWidth = isAvatar ? AVATAR_SIZE : width;
-  const frameHeight = isAvatar ? AVATAR_SIZE : BANNER_HEIGHT;
+  const frameWidth = isAvatar ? AVATAR_SIZE : isItem ? ITEM_CROP_FRAME_SIZE : width;
+  const frameHeight = isAvatar ? AVATAR_SIZE : isItem ? ITEM_CROP_FRAME_SIZE : BANNER_HEIGHT;
 
   const handleSave = async () => {
     const rect = cropperRef.current?.getCropRect();
@@ -30,8 +34,12 @@ const ImageCropScreen = ({ mode, wishlistId, imageUri, initialCrop, onCancel, on
 
     setSaving(true);
     try {
-      const field = isAvatar ? 'user_image' : 'background_image';
-      const endpoint = isAvatar ? `/wishlists/${wishlistId}/user_image` : `/wishlists/${wishlistId}/background_image`;
+      const field = isAvatar ? 'user_image' : isItem ? 'image' : 'background_image';
+      const endpoint = isAvatar
+        ? `/wishlists/${wishlistId}/user_image`
+        : isItem
+        ? `/wishlists/${wishlistId}/items/${itemId}/image`
+        : `/wishlists/${wishlistId}/background_image`;
       const { data } = await api.patch(endpoint, {
         [`${field}_crop_x`]: rect.x,
         [`${field}_crop_y`]: rect.y,
@@ -40,7 +48,7 @@ const ImageCropScreen = ({ mode, wishlistId, imageUri, initialCrop, onCancel, on
         [`${field}_crop_ratio`]: rect.ratio,
       });
       // Use the resolved (cropped) URL for display, not the unversioned base image.
-      onSaved(isAvatar ? data.resolved_user_image_url : data.resolved_background_image_url);
+      onSaved(isAvatar ? data.resolved_user_image_url : isItem ? data.resolved_image_url : data.resolved_background_image_url);
     } catch (error) {
       Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.cropSaveError'));
     } finally {
@@ -101,7 +109,7 @@ const ImageCropScreen = ({ mode, wishlistId, imageUri, initialCrop, onCancel, on
           <Text style={styles.cancelText}>{i18n.t('wishlist.cancel')}</Text>
         </TouchableOpacity>
         <Text style={styles.title}>
-          {isAvatar ? i18n.t('wishlist.cropAvatarTitle') : i18n.t('wishlist.cropBackgroundTitle')}
+          {isAvatar ? i18n.t('wishlist.cropAvatarTitle') : isItem ? i18n.t('wishlist.cropItemTitle') : i18n.t('wishlist.cropBackgroundTitle')}
         </Text>
         <TouchableOpacity style={styles.headerButton} onPress={handleSave} disabled={saving}>
           {saving ? <ActivityIndicator color={theme.primary} /> : <Text style={styles.saveText}>{i18n.t('wishlist.save')}</Text>}

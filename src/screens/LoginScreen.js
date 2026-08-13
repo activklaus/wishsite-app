@@ -44,7 +44,12 @@ const LoginScreen = ({ onLogin, onShowRegister, onShowForgotPassword }) => {
     const success = await authenticateWithBiometrics();
     setBiometricLoading(false);
     if (success) {
-      onLogin(biometricSession.user);
+      // loadSession() (session.js) stores { user, token } as siblings, not token nested inside
+      // user - but App.tsx's handleLogin reads the token off the object it's given
+      // (userData.token). Passing biometricSession.user alone left that undefined, so the
+      // biometric login "succeeded" with no real auth token and the very next API call 401'd,
+      // immediately triggering the session-expired handler right after Face ID.
+      onLogin({ ...biometricSession.user, token: biometricSession.token });
     }
   };
 

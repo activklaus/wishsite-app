@@ -59,3 +59,8 @@ web-build/
 
 # Local Netlify folder
 .netlify
+
+# Local env vars (e.g. EXPO_PUBLIC_GA_MEASUREMENT_ID/EXPO_PUBLIC_GA_API_SECRET for local dev,
+# auto-loaded by Expo CLI) - never commit real secrets here.
+.env
+.env.local

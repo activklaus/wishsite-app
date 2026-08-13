@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet, Dimensions, Modal, FlatList } from 'react-native';
 import { useTheme } from '../hooks/useTheme';
+import { useLocale } from '../hooks/useLocale';
 import { headingStyle, bodyStyle } from '../styles/fonts';
 import { RADIUS } from '../styles/shared';
 import Button from '../components/Button';
@@ -9,50 +10,93 @@ import i18n from '../i18n';
 const { width, height } = Dimensions.get('window');
 const isTablet = width >= 768;
 const isSmallScreen = height < 700;
+// Explicit pixel size instead of width:'100%' + aspectRatio - the slide's flex:1 ancestor chain
+// resolved that combination unpredictably (image ended up filling nearly the full screen height,
+// pushing the title/subtitle out of view). Images are square (1:1), driven off a fixed HEIGHT.
+const SLIDE_IMAGE_HEIGHT = isTablet ? 420 : (isSmallScreen ? 260 : 360);
+const SLIDE_IMAGE_WIDTH = SLIDE_IMAGE_HEIGHT;
+
+const AUTO_ADVANCE_INTERVAL = 4000;
 
 const WelcomeScreen = ({ onContinue }) => {
   const { theme } = useTheme();
+  const { locale, setLocale } = useLocale();
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(0);
   const flatListRef = useRef(null);
 
   const slides = [
     {
-      title: 'Die einfachste Art zu wünschen',
-      subtitle: 'Millionen erfüllte Wünsche, über 99% Zufriedenheit',
-      icon: '🎁'
+      title: i18n.t('onboarding.slide1Title'),
+      subtitle: i18n.t('onboarding.slide1Subtitle'),
+      image: require('../../assets/screen1_app.jpg'),
     },
     {
-      title: 'Nur wenige Klicks',
-      subtitle: 'Lege in wenigen Sekunden deine eigene wishsite an',
-      icon: '⚡'
+      title: i18n.t('onboarding.slide2Title'),
+      subtitle: i18n.t('onboarding.slide2Subtitle'),
+      image: require('../../assets/screen2_app.jpg'),
     },
     {
-      title: 'Wünsche sammeln',
-      subtitle: 'Füge so viele Wünsche hinzu wie du möchtest - egal aus welchem Shop',
-      icon: '📝'
+      title: i18n.t('onboarding.slide3Title'),
+      subtitle: i18n.t('onboarding.slide3Subtitle'),
+      image: require('../../assets/screen3_app.jpg'),
     },
     {
-      title: 'Mit anderen teilen',
-      subtitle: 'Teile deine wishsite ganz einfach mit Familie und Freunden',
-      icon: '👥'
+      title: i18n.t('onboarding.slide4Title'),
+      subtitle: i18n.t('onboarding.slide4Subtitle'),
+      // TODO: two candidate images exist for this slide (screen4_app.jpg / screen4_alternativ_app.jpg) -
+      // pending a decision on which to use.
+      image: require('../../assets/screen4_app.jpg'),
     }
   ];
 
-  const getCurrentFlag = () => {
-    return i18n.locale === 'en' ? '🇺🇸' : '🇩🇪';
-  };
-
   const handleLanguageSelect = (language) => {
-    i18n.locale = language;
+    setLocale(language);
     setLanguageModalVisible(false);
   };
 
+  // Appending a duplicate of slide 1 after the real last slide lets both auto-advance and a
+  // manual swipe-past-the-end land somewhere - handleMomentumScrollEnd below then snaps that
+  // duplicate back to the real slide 0 instantly (no animation), so the loop looks seamless
+  // instead of just stopping dead at the last slide.
+  const slidesForList = [...slides, slides[0]];
+
+  // Mirrors the FlatList's real, current scroll position on every scroll event (not just once a
+  // swipe settles) - the auto-advance timer below reads from this instead of the `currentSlide`
+  // state directly, because that state only updates via onViewableItemsChanged, which can lag
+  // behind an in-flight manual swipe. Computing "next index" from a stale currentSlide caused the
+  // timer to occasionally fire against the wrong slide when a manual swipe and the timer landed
+  // close together.
+  const scrollPositionRef = useRef(0);
+
+  const handleScroll = (e) => {
+    scrollPositionRef.current = e.nativeEvent.contentOffset.x;
+  };
+
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
-    if (viewableItems.length > 0) {
+    if (viewableItems.length > 0 && viewableItems[0].index < slides.length) {
       setCurrentSlide(viewableItems[0].index);
     }
   }).current;
+
+  const handleMomentumScrollEnd = (e) => {
+    const index = Math.round(e.nativeEvent.contentOffset.x / width);
+    if (index === slides.length) {
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+      scrollPositionRef.current = 0;
+      setCurrentSlide(0);
+    }
+  };
+
+  // Restarts on every slide change, whichever triggered it (this timer, or a manual swipe via
+  // onViewableItemsChanged) - so a manual swipe doesn't fight with the next auto-advance tick.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const currentIndex = Math.round(scrollPositionRef.current / width);
+      flatListRef.current?.scrollToIndex({ index: currentIndex + 1, animated: true });
+    }, AUTO_ADVANCE_INTERVAL);
+    return () => clearTimeout(timer);
+  }, [currentSlide]);
 
   const renderSlide = ({ item }) => (
     <View style={[styles.slide, { width }]}>
@@ -64,9 +108,7 @@ const WelcomeScreen = ({ onContinue }) => {
         {item.subtitle}
       </Text>
 
-      <View style={[styles.dummyImage, { backgroundColor: theme.surface }]}>
-        <Text style={[styles.dummyImageText, { color: theme.text }]}>{item.icon}</Text>
-      </View>
+      <Image source={item.image} style={styles.slideImage} resizeMode="cover" />
     </View>
   );
 
@@ -83,20 +125,25 @@ const WelcomeScreen = ({ onContinue }) => {
           style={[styles.languageButton, { backgroundColor: theme.surface }]}
           onPress={() => setLanguageModalVisible(true)}
         >
-          <Text style={[styles.languageButtonText, { color: theme.text }]}>🌐</Text>
+          <Text style={styles.languageButtonText}>{locale === 'en' ? '🇺🇸' : '🇩🇪'}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.content}>
         <FlatList
           ref={flatListRef}
-          data={slides}
+          data={slidesForList}
+          keyExtractor={(_, index) => index.toString()}
+          getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
           renderItem={renderSlide}
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          onMomentumScrollEnd={handleMomentumScrollEnd}
           style={styles.carousel}
         />
 
@@ -117,7 +164,7 @@ const WelcomeScreen = ({ onContinue }) => {
         <Button
           style={styles.continueButton}
           onPress={onContinue}
-          title="Los geht's"
+          title={i18n.t('onboarding.continueButton')}
         />
       </View>
 
@@ -129,27 +176,29 @@ const WelcomeScreen = ({ onContinue }) => {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>Sprache wählen</Text>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>{i18n.t('language.modalTitle')}</Text>
 
             <TouchableOpacity
               style={[styles.languageOption, { borderBottomColor: theme.border }]}
               onPress={() => handleLanguageSelect('de')}
             >
-              <Text style={[styles.languageOptionText, { color: theme.text }]}>🇩🇪 Deutsch</Text>
+              <Text style={styles.languageOptionFlag}>🇩🇪</Text>
+              <Text style={[styles.languageOptionText, { color: theme.text }]}>{i18n.t('language.german')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.languageOption, { borderBottomColor: theme.border }]}
               onPress={() => handleLanguageSelect('en')}
             >
-              <Text style={[styles.languageOptionText, { color: theme.text }]}>🇺🇸 English</Text>
+              <Text style={styles.languageOptionFlag}>🇺🇸</Text>
+              <Text style={[styles.languageOptionText, { color: theme.text }]}>{i18n.t('language.english')}</Text>
             </TouchableOpacity>
 
             <Button
               style={styles.cancelButton}
               variant="secondary"
               onPress={() => setLanguageModalVisible(false)}
-              title="Abbrechen"
+              title={i18n.t('language.cancel')}
             />
           </View>
         </View>
@@ -221,16 +270,11 @@ const styles = StyleSheet.create({
     lineHeight: isTablet ? 24 : (isSmallScreen ? 16 : 20),
     marginBottom: isTablet ? 30 : (isSmallScreen ? 15 : 20),
   },
-  dummyImage: {
-    width: isTablet ? 150 : (isSmallScreen ? 80 : 120),
-    height: isTablet ? 150 : (isSmallScreen ? 80 : 120),
+  slideImage: {
+    width: SLIDE_IMAGE_WIDTH,
+    height: SLIDE_IMAGE_HEIGHT,
     borderRadius: RADIUS.card,
-    justifyContent: 'center',
-    alignItems: 'center',
     marginBottom: isTablet ? 30 : (isSmallScreen ? 15 : 20),
-  },
-  dummyImageText: {
-    fontSize: isTablet ? 50 : (isSmallScreen ? 30 : 40),
   },
   continueButton: {
     minWidth: isTablet ? 180 : 140,
@@ -255,9 +299,16 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   languageOption: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
     paddingVertical: 15,
     paddingHorizontal: 10,
     borderBottomWidth: 1,
+  },
+  languageOptionFlag: {
+    fontSize: isTablet ? 18 : 16,
   },
   languageOptionText: {
     ...bodyStyle(isTablet ? 18 : 16),
