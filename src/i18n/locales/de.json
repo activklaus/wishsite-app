@@ -89,7 +89,7 @@
     "enterWish": "Wunsch eingeben...",
     "cancel": "Abbrechen",
     "save": "Speichern",
-    "searching": "Suche...",
+    "searching": "Website-Daten werden ausgelesen...",
     "directAdd": "Wunsch direkt eingeben",
     "addingToWishlist": "Wird hinzugefügt...",
     "addToMyWishlist": "Auf meine wishsite",
@@ -140,7 +140,11 @@
     "createWishlistSubmit": "wishsite anlegen",
     "linkWishlistSubmit": "Wunschliste meinem Konto zuweisen",
     "selectImages": "Bild auswählen",
+    "takePhoto": "Foto aufnehmen",
+    "cameraPermissionMessage": "Bitte erlaube den Zugriff auf deine Kamera, um ein Foto aufzunehmen.",
     "noImagesFoundNotice": "Auf der verlinkten Seite können leider keine Bilder ausgelesen werden. Du kannst aber immer noch selbst ein Bild hochladen oder verlinken.",
+    "scrapeSuccessNotice": "Die Daten zu dem angegebenen Link konnten erfolgreich ausgelesen werden. Du kannst sie jetzt bei Bedarf noch anpassen.",
+    "scrapeFailureNotice": "Es konnten keine Daten von der Website ausgelesen werden. Du kannst die Details jetzt selbst eingeben – der Link wurde bereits hinterlegt.",
     "titlePlaceholder": "Titel",
     "descriptionPlaceholder": "Beschreibung (optional)",
     "pricePlaceholder": "Preis (optional)",
@@ -197,10 +201,10 @@
     "addWishlistButtonText": "Weitere wishsite verknüpfen",
     "addGuestWishlistButtonText": "Lesezeichen anlegen",
     "guestWishlistsHeader": "wishsites von anderen",
-    "shareFormTitle": "Geteilten Wunsch hinzufügen",
+    "shareFormTitle": "Wunsch hinzufügen",
     "shareFormError": "Titel ist erforderlich",
     "shareFormSaveError": "Fehler beim Speichern",
-    "shareFormSelectWishlist": "Zu wishsite hinzufügen",
+    "shareFormSelectWishlist": "wishsite auswählen",
     "shareFormSelectWishlistError": "Bitte wähle eine wishsite aus",
     "shareFormNoWishlists": "Du hast noch keine wishsites",
     "modalTitle": "wishsite",
@@ -226,6 +230,8 @@
     "cropBackgroundTitle": "Hintergrund zuschneiden",
     "cropAvatarTitle": "Profilbild zuschneiden",
     "changeItemImageLink": "Bild ändern",
+    "searchItemImagesLink": "Bilder von Website suchen",
+    "searchItemImagesTitle": "Bilder von der verlinkten Website",
     "cropItemImageLink": "Bild zuschneiden",
     "cropItemTitle": "Bild zuschneiden",
     "cropHint": "Zum Verschieben ziehen, mit zwei Fingern zoomen",
@@ -263,6 +269,13 @@
     "shareEmbedHint": "Markiere und kopiere folgenden HTML-Code und füge ihn in deine Webseite ein.",
     "shareNative": "Teilen über...",
     "shareGenericError": "Da ist etwas schiefgelaufen",
+
+    "createdInfoTitle": "Deine wishsite wurde angelegt",
+    "createdInfoEditHeader": "Link merken",
+    "createdInfoEditText": "Du kannst deine wishsite jederzeit im Browser unter diesem Link aufrufen und bearbeiten:",
+    "createdInfoShareHeader": "wishsite teilen",
+    "createdInfoShareText": "Verschicke diesen Link an deine Freunde und Verwandten, damit sie deine Wünsche reservieren können:",
+    "createdInfoButton": "Los geht's",
 
     "stats": {
       "header": "Statistik zur Wunschliste",
@@ -386,6 +399,7 @@
   },
   "offline": {
     "banner": "Keine Internetverbindung",
-    "actionFailed": "Keine Internetverbindung. Aktion konnte nicht ausgeführt werden."
+    "actionFailed": "Keine Internetverbindung. Aktion konnte nicht ausgeführt werden.",
+    "refresh": "Aktualisieren"
   }
 }

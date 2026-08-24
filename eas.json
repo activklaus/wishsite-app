@@ -17,11 +17,19 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://wishsite.de/api/v1"
+        "EXPO_PUBLIC_API_BASE_URL": "https://www.wishsite.de/api/v1"
+      },
+      "ios": {
+        "image": "latest"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "/Users/markus/.secrets/wishsite-play-console-key.json",
+        "track": "internal"
+      }
+    }
   }
 }

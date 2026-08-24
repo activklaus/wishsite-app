@@ -8,19 +8,25 @@ import api from '../services/api';
 import i18n from '../i18n';
 import Button from '../components/Button';
 import TextField from '../components/TextField';
+import ProductImageCarousel, { getImageUri } from '../components/ProductImageCarousel';
 
 const ShareFormScreen = ({ route, navigation }) => {
-  const { sharedUrl, wishlistId } = route.params;
+  const { sharedUrl, sharedTitle, sharedDescription, wishlistId } = route.params;
   const { theme, isDarkMode } = useTheme();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [wishlists, setWishlists] = useState([]);
-  const [loadingWishlists, setLoadingWishlists] = useState(!wishlistId);
+  const [loadingWishlists, setLoadingWishlists] = useState(true);
   const [selectedAdminKey, setSelectedAdminKey] = useState(wishlistId || null);
-  const [imageUrl, setImageUrl] = useState(null);
+  const [images, setImages] = useState([]);
+  const [imagesChecked, setImagesChecked] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [formData, setFormData] = useState({
-    title: '',
-    description: '',
+    // Seeded from the share sheet's own page title/description (see useShareHandler.js) so
+    // there's already a sensible suggestion even before/if the /search scrape below finds
+    // something more specific. Price isn't seeded this way - see useShareHandler.js for why.
+    title: sharedTitle || '',
+    description: sharedDescription || '',
     price: '',
     link: sharedUrl || '',
     quantity: '1'
@@ -33,15 +39,19 @@ const ShareFormScreen = ({ route, navigation }) => {
       setLoading(false);
     }
 
-    if (!wishlistId) {
-      loadWishlists();
-    }
+    loadWishlists();
   }, [sharedUrl]);
 
   const loadWishlists = async () => {
     try {
       const { data } = await api.get('/user');
-      setWishlists(data.wishlists || []);
+      const loaded = data.wishlists || [];
+      setWishlists(loaded);
+      // Nothing to actually decide with just one wishsite - skip the picker and use it
+      // regardless of what was (or wasn't) already open when the share sheet was invoked.
+      if (loaded.length === 1) {
+        setSelectedAdminKey(loaded[0].admin_key);
+      }
     } catch (error) {
       // Leave the picker empty; the user can still cancel out.
     } finally {
@@ -50,22 +60,36 @@ const ShareFormScreen = ({ route, navigation }) => {
   };
 
   const fetchItemData = async (url) => {
+    // Mirrors WishlistDetailScreen's handleSearchProduct (the in-app "add wish by URL" search)
+    // exactly, including on failure: rather than dead-ending on a stuck screen, fall through to
+    // an (empty) product so the form still opens, pre-filled with whatever the share sheet
+    // already gave us (title/description), letting the user fill in the rest by hand.
+    let product = {};
     try {
-      const { data } = await api.post('/search', { q: url });
-      const product = data.product || {};
-      setFormData(prev => ({
-        ...prev,
-        title: product.title || '',
-        description: product.description || '',
-        price: product.price || '',
-        link: url,
-      }));
-      setImageUrl(product.image_url || null);
+      // A URL query goes through scrape_product_data server-side (full page fetch + AI
+      // extraction for non-Amazon domains) - this can legitimately take 30-40s, far past the
+      // axios default of 10s, so it needs its own generous timeout here.
+      const { data } = await api.post('/search', { q: url }, { timeout: 60000 });
+      product = data.product || {};
     } catch (error) {
-      // Leave the form blank; the user can fill it in manually.
-    } finally {
-      setLoading(false);
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.shareGenericError'));
     }
+
+    const imagesArray = product.images || [];
+    if (product.image_url && imagesArray.length === 0) {
+      imagesArray.push(product.image_url);
+    }
+    setFormData(prev => ({
+      ...prev,
+      title: product.title || sharedTitle || '',
+      description: product.description || sharedDescription || '',
+      price: product.price ? product.price.replace(/[^\d.,]/g, '').replace(',', '.') : '',
+      link: url,
+    }));
+    setImages(imagesArray);
+    setImagesChecked(true);
+    setSelectedImageIndex(0);
+    setLoading(false);
   };
 
   const handleSave = async () => {
@@ -89,11 +113,14 @@ const ShareFormScreen = ({ route, navigation }) => {
         allow_reservation: true,
         hidden: false,
         links: formData.link ? [{ url: formData.link }] : [],
-        remote_image_url: imageUrl,
+        remote_image_url: getImageUri(images[selectedImageIndex]),
       };
 
-      await api.post(`/wishlists/${selectedAdminKey}/items`, itemData);
-      navigation.goBack();
+      const { data } = await api.post(`/wishlists/${selectedAdminKey}/items`, itemData);
+      // Tells App.tsx to land on the wishsite the item was just added to, scrolled to it -
+      // the plain no-arg goBack() (header back button above) just returns to whatever was
+      // showing before instead.
+      navigation.goBack(selectedAdminKey, data.id);
     } catch (error) {
       Alert.alert(i18n.t('login.error'), i18n.t('wishlist.shareFormSaveError'));
     } finally {
@@ -129,43 +156,57 @@ const ShareFormScreen = ({ route, navigation }) => {
       </View>
 
       <ScrollView style={styles.content}>
-        {!wishlistId && (
+        {/* Hidden while wishlists are still loading (avoids a spinner flash for the common case
+            below) and once loaded there's exactly one wishsite to use. Otherwise always shown -
+            even when a specific wishsite was already open when the share sheet was invoked -
+            so the target is never just an invisible, possibly-stale bit of navigation state. */}
+        {!loadingWishlists && wishlists.length !== 1 && (
           <View style={[styles.form, cardStyle(theme, isDarkMode), { marginBottom: 12 }]}>
             <Text style={[styles.label, { color: theme.text, marginTop: 0 }]}>
-              {i18n.t('wishlist.shareFormSelectWishlist')} *
+              {i18n.t('wishlist.shareFormSelectWishlist')}
             </Text>
-            {loadingWishlists ? (
-              <ActivityIndicator color={theme.primary} style={{ marginTop: 8 }} />
-            ) : wishlists.length === 0 ? (
+            {wishlists.length === 0 ? (
               <Text style={{ color: theme.textSecondary, marginTop: 8 }}>
                 {i18n.t('wishlist.shareFormNoWishlists')}
               </Text>
             ) : (
-              wishlists.map((wl) => {
-                const selected = wl.admin_key === selectedAdminKey;
-                return (
-                  <TouchableOpacity
-                    key={wl.admin_key}
-                    style={[
-                      styles.wishlistOption,
-                      { borderColor: theme.border },
-                      selected && { borderColor: theme.primary, backgroundColor: isDarkMode ? theme.background : '#F5F0FF' }
-                    ]}
-                    onPress={() => setSelectedAdminKey(wl.admin_key)}
-                  >
-                    <Text style={[styles.wishlistOptionText, { color: theme.text }]} numberOfLines={1}>
-                      {wl.title}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })
+              <View style={styles.wishlistChipRow}>
+                {wishlists.map((wl) => {
+                  const selected = wl.admin_key === selectedAdminKey;
+                  return (
+                    <TouchableOpacity
+                      key={wl.admin_key}
+                      style={[
+                        styles.wishlistChip,
+                        { borderColor: theme.border, backgroundColor: theme.surface },
+                        selected && { borderColor: theme.primary, backgroundColor: theme.primary }
+                      ]}
+                      onPress={() => setSelectedAdminKey(wl.admin_key)}
+                    >
+                      <Text
+                        style={[styles.wishlistChipText, { color: selected ? '#FFFFFF' : theme.text }]}
+                        numberOfLines={1}
+                      >
+                        {wl.title}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             )}
           </View>
         )}
 
         <View style={[styles.form, cardStyle(theme, isDarkMode)]}>
+          <ProductImageCarousel
+            images={images}
+            imagesChecked={imagesChecked}
+            selectedIndex={selectedImageIndex}
+            onSelectIndex={setSelectedImageIndex}
+          />
+
           <Text style={[styles.label, { color: theme.text, marginTop: 0 }]}>
-            {i18n.t('wishlist.titlePlaceholder')} *
+            {i18n.t('wishlist.titlePlaceholder')}
           </Text>
           <TextField
             value={formData.title}
@@ -259,15 +300,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: 16,
   },
-  wishlistOption: {
-    borderWidth: 1,
-    borderRadius: RADIUS.small,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  wishlistChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 8,
   },
-  wishlistOptionText: {
-    fontSize: 15,
+  wishlistChip: {
+    borderWidth: 1,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    maxWidth: '100%',
+  },
+  wishlistChipText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   footer: {
     padding: 16,

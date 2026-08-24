@@ -79,8 +79,11 @@ export const useWishlistItems = (wishlist, authToken) => {
     const response = await api.post(`/wishlists/${wishlist.admin_key}/items`, itemData, {
       headers: { Authorization: `Bearer ${authToken}` }
     });
-    await loadItems();
-    return response.data;
+    // Returned alongside the fresh list (not just the created item) so callers can find its
+    // index to scroll to it right away, the same way duplicateItem/moveItem already do - the
+    // component's own `items` state wouldn't reflect this update yet inside the same closure.
+    const freshItems = await loadItems();
+    return { item: response.data, items: freshItems };
   };
 
   const loadSingleItem = async (itemId) => {

@@ -23,6 +23,7 @@ import WishlistItem from '../components/WishlistItem';
 import SkeletonLoader from '../components/SkeletonLoader';
 import ModalSkeleton from '../components/ModalSkeleton';
 import SafeImage from '../components/SafeImage';
+import ProductImageCarousel, { getImageUri } from '../components/ProductImageCarousel';
 import { useWishlistItems } from '../hooks/useWishlistItems';
 import { showToast } from '../services/toast';
 import api, { WEB_BASE_URL } from '../services/api';
@@ -40,7 +41,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { SvgXml } from 'react-native-svg';
-import { editIcon, cropIcon, backgroundIcon, userImageIcon, openIcon, clipboardIcon, shortlinkIcon, qrcodeIcon, embedIcon, shareIcon, deleteIcon, duplicateIcon, moveIcon, lockIcon, hiddenIcon, sortIcon } from '../styles/icons';
+import { editIcon, cropIcon, cameraIcon, backgroundIcon, userImageIcon, openIcon, clipboardIcon, shortlinkIcon, qrcodeIcon, embedIcon, shareIcon, deleteIcon, duplicateIcon, moveIcon, lockIcon, hiddenIcon, sortIcon } from '../styles/icons';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -93,7 +94,7 @@ const getWishlistBannerDarkColor = (color) => {
   return WISHLIST_THEME_COLORS[color]?.accentDark || null;
 };
 
-const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, onLogout, autoOpenEdit }) => {
+const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, onLogout, autoOpenEdit, justCreated, scrollToItemId }) => {
   const { theme, isDarkMode } = useTheme();
   const insets = useSafeAreaInsets();
   const { items, setItems, loading, loadItems, wishlistData, locked, updateItem, deleteItem, duplicateItem, moveItem, addItem, loadSingleItem, loadItemAdmin, updateWishlist, deleteWishlist } = useWishlistItems(wishlist, authToken);
@@ -116,11 +117,17 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const [loadingMoveWishlists, setLoadingMoveWishlists] = useState(false);
   const [movingItem, setMovingItem] = useState(false);
   const [directAddMode, setDirectAddMode] = useState(false);
-  const [imagePickerItem, setImagePickerItem] = useState(null); // { itemId, images, selectedIndex }
-  const [loadingImages, setLoadingImages] = useState(false);
+  // { itemId, loading, images, selectedIndex } | null - re-running the image search for an
+  // existing item's link on demand (handleChangeItemImagePress). images/loading feed
+  // ProductImageCarousel the same way ShareFormScreen's own images/imagesChecked state does.
+  const [imageSearchItem, setImageSearchItem] = useState(null);
   // Mirrors web's showOverlay(true, true) shown while items_controller.rb#copy / #move run.
   const [performingItemAction, setPerformingItemAction] = useState(false);
   const [fromSearch, setFromSearch] = useState(false);
+  // Mirrors search_products_controller.rb#build_new_item_from_scrape's @scrape_data_found: null
+  // when not applicable (not a search-driven scrape), true/false once handleSearchProduct's URL
+  // scrape has run, to show wishsite3's find.js.erb success/warning notice instead of a header.
+  const [scrapeDataFound, setScrapeDataFound] = useState(null);
   // imagesChecked: true once an image-scrape attempt for a URL has actually completed (whether
   // or not it found anything) — distinguishes "no URL entered yet" (images: [], stay silent)
   // from "URL scraped, found nothing" (images: [], show the no-image-found notice), mirroring
@@ -162,6 +169,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const [avatarMenuVisible, setAvatarMenuVisible] = useState(false);
   const [shareMenuVisible, setShareMenuVisible] = useState(false);
   const [shareSubView, setShareSubView] = useState(null); // null | 'shortlink' | 'qrcode' | 'changeLink' | 'embed'
+  const [createdInfoModalVisible, setCreatedInfoModalVisible] = useState(false);
+  const [createdInfoEditLinkCopied, setCreatedInfoEditLinkCopied] = useState(false);
+  const [createdInfoShareLinkCopied, setCreatedInfoShareLinkCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shortlinkCopied, setShortlinkCopied] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
@@ -254,13 +264,16 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
 
   const handleSearchProduct = async () => {
     if (!wishTitle.trim()) return;
-    
+
     setSearching(true);
     setMoreResultsLoaded(false);
     try {
-      const response = await api.post('/search', { q: wishTitle });
+      // A URL query goes through scrape_product_data server-side (full page fetch + AI
+      // extraction for non-Amazon domains) - this can legitimately take 30-40s, far past the
+      // axios default of 10s, so it needs its own generous timeout here.
+      const response = await api.post('/search', { q: wishTitle }, { timeout: 60000 });
       const data = response.data;
-      
+
       if (data.results && Array.isArray(data.results)) {
         setSearchResults(data.results.map(item => ({
           ...item,
@@ -274,6 +287,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
         }
         setDirectAddMode(true);
         setFromSearch(true);
+        setScrapeDataFound(!!(data.product.title || imagesArray.length > 0));
         setDirectWish({
           title: data.product.title || '',
           description: data.product.description || '',
@@ -288,6 +302,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
         });
       }
     } catch (error) {
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.shareGenericError'));
     } finally {
       setSearching(false);
     }
@@ -296,9 +311,9 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const handleSearchMore = async () => {
     setSearching(true);
     try {
-      const response = await api.post('/search', { q: wishTitle, limit: 20 });
+      const response = await api.post('/search', { q: wishTitle, limit: 20 }, { timeout: 60000 });
       const data = response.data;
-      
+
       if (data.results && Array.isArray(data.results)) {
         setSearchResults(data.results.map(item => ({
           ...item,
@@ -307,6 +322,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
         setMoreResultsLoaded(true);
       }
     } catch (error) {
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.shareGenericError'));
     } finally {
       setSearching(false);
     }
@@ -343,18 +359,18 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       console.log('=== SEARCH PRODUCT REQUEST ===');
       console.log('Request Data:', JSON.stringify(itemData, null, 2));
       
-      const newItem = await addItem(itemData);
-      
+      const { item: newItem, items: freshItems } = await addItem(itemData);
+
       // Scroll to new item
       setTimeout(() => {
         if (wishlistRef.current && newItem) {
-          const newIndex = items.findIndex(item => item.id === newItem.id);
+          const newIndex = freshItems.findIndex(item => item.id === newItem.id);
           if (newIndex !== -1) {
             wishlistRef.current.scrollToIndex({ index: newIndex, animated: true });
           }
         }
       }, 100);
-      
+
       setWishTitle('');
       setSearchResults([]);
       setSelectedProduct(null);
@@ -480,6 +496,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const handleDirectAdd = async () => {
     setDirectAddMode(true);
     setFromSearch(false);
+    setScrapeDataFound(null);
     const initialWish = { title: wishTitle, description: '', price: '', url: '', hidden: false, allow_reservation: true, images: [], imagesChecked: false, selectedImageIndex: 0 };
     setDirectWish(initialWish);
 
@@ -505,45 +522,51 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   const handleSaveDirectWish = async () => {
     if (directWish.title.trim()) {
       try {
+        const imageUrl = getImageUri(directWish.images[directWish.selectedImageIndex]);
+        const linkUrl = directWish.url.trim();
         const itemData = {
           title: directWish.title,
           description: directWish.description || '',
           price: directWish.price,
           quantity: 1,
-          links: directWish.url ? [{ url: directWish.url }] : [],
+          links: linkUrl ? [{ url: linkUrl }] : [],
           hidden: directWish.hidden,
           allow_reservation: directWish.allow_reservation,
-          position: directWish.position
+          position: directWish.position,
+          remote_image_url: imageUrl,
         };
-        
-        const savedUrl = directWish.url.trim();
-        const newItem = await addItem(itemData);
-        
+
+        const { item: newItem, items: freshItems } = await addItem(itemData);
+
+        // Scroll to new item
+        setTimeout(() => {
+          if (wishlistRef.current && newItem) {
+            const newIndex = freshItems.findIndex(item => item.id === newItem.id);
+            if (newIndex !== -1) {
+              wishlistRef.current.scrollToIndex({ index: newIndex, animated: true });
+            }
+          }
+        }, 100);
+
         setWishTitle('');
         setDirectWish({ title: '', description: '', price: '', url: '', hidden: false, allow_reservation: true, images: [], selectedImageIndex: 0 });
         setDirectAddMode(false);
         setFromSearch(false);
+        setScrapeDataFound(null);
         setModalVisible(false);
 
-        if (newItem && savedUrl && (savedUrl.startsWith('http://') || savedUrl.startsWith('https://'))) {
-          setLoadingImages(true);
-          try {
-            const response = await api.get(`/images/load_images?url=${encodeURIComponent(savedUrl)}`);
-            if (response.data.images && Array.isArray(response.data.images) && response.data.images.length > 0) {
-              setImagePickerItem({ itemId: newItem.id, images: response.data.images, selectedIndex: 0 });
-            }
-          } catch (e) {}
-          setLoadingImages(false);
+        // Offers the same "search images" popup handleChangeItemImagePress has for existing
+        // items, proactively right away for a wish that ended up with no image at all (neither
+        // picked from a carousel nor scrape-found) but does have a link to search. Delayed to let
+        // the "add wish" Modal's own dismissal above finish first - presenting a new Modal in the
+        // same tick another one closes is the same race that's silently swallowed other popups
+        // in this screen before.
+        if (!imageUrl && linkUrl) {
+          setTimeout(() => handleSearchItemImages(newItem.id, linkUrl), 400);
         }
       } catch (error) {
       }
     }
-  };
-
-  const handleBackToSearch = () => {
-    setDirectAddMode(false);
-    setFromSearch(false);
-    setDirectWish({ title: '', description: '', price: '', url: '', hidden: false, allow_reservation: true });
   };
 
   // Mirrors wishlist_controller.rb#reorder (web, Sortable.js drag-and-drop) via the new
@@ -628,6 +651,7 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     setSelectedProduct(null);
     setDirectAddMode(false);
     setFromSearch(false);
+    setScrapeDataFound(null);
     setDirectWish({ title: '', description: '', price: '', url: '', hidden: false, allow_reservation: true });
     setModalVisible(false);
   };
@@ -762,6 +786,33 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     }
   }, []);
 
+  // Shown once right after creation (WishlistScreen.js navigates here with justCreated: true
+  // instead of staying on the overview) - mirrors wishsite3's _instructions_after_creation
+  // popup. Unlike web there's no hide_bookmark_info DB flag to persist: the app never re-enters
+  // this screen with justCreated set except via that one create action, so there's nothing to
+  // "remember" - dismissing it here is enough for it to never show again.
+  useEffect(() => {
+    if (justCreated) {
+      setCreatedInfoModalVisible(true);
+    }
+  }, []);
+
+  // Lands on the item just added via the share sheet (ShareFormScreen.js -> App.tsx) once the
+  // list has actually loaded. App.tsx gives this screen a key that changes whenever there's a
+  // scrollToItemId to honor, guaranteeing a fresh mount/fresh item list here rather than this
+  // running against a possibly-stale list from before the item existed.
+  useEffect(() => {
+    if (!loading && scrollToItemId && items.length > 0) {
+      const index = items.findIndex((item) => item.id === scrollToItemId);
+      if (index !== -1) {
+        setTimeout(() => {
+          wishlistRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
+        }, 300);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   // Mobile-only opt-in (no web equivalent): registers/unregisters this device's Expo push
   // token right away so the toggle takes effect even if the user backs out without saving,
   // while `push_notifications` itself still rides along in the regular save payload below.
@@ -825,22 +876,37 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     }
   };
 
-  // Ported from wishsite3's background_image/user_image upload + crop flow
-  // (app/controllers/api/v1/background_images_controller.rb, app/controllers/api/v1/user_images_controller.rb).
-  const pickAndUploadImage = async (mode) => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  // Shared by every "change image" flow below (wishlist background/avatar, item image) - picks
+  // either from the photo library or straight from the camera, requesting whichever permission
+  // that needs. Returns the picked asset, or null if permission was refused or the picker was
+  // dismissed without a selection.
+  const pickImageAsset = async (source) => {
+    const permission = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert(i18n.t('wishlist.permissionRequiredTitle'), i18n.t('wishlist.photoPermissionMessage'));
-      return;
+      Alert.alert(
+        i18n.t('wishlist.permissionRequiredTitle'),
+        source === 'camera' ? i18n.t('wishlist.cameraPermissionMessage') : i18n.t('wishlist.photoPermissionMessage')
+      );
+      return null;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const launch = source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
+    const result = await launch({
       mediaTypes: ['images'],
       quality: 1,
     });
-    if (result.canceled || !result.assets?.length) return;
+    if (result.canceled || !result.assets?.length) return null;
+    return result.assets[0];
+  };
 
-    const asset = result.assets[0];
+  // Ported from wishsite3's background_image/user_image upload + crop flow
+  // (app/controllers/api/v1/background_images_controller.rb, app/controllers/api/v1/user_images_controller.rb).
+  const pickAndUploadImage = async (mode, source = 'library') => {
+    const asset = await pickImageAsset(source);
+    if (!asset) return;
+
     const field = mode === 'avatar' ? 'user_image' : 'background_image';
     const endpoint = `/wishlists/${currentWishlist.admin_key}/${field}`;
 
@@ -900,21 +966,15 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
 
   // Mirrors wishsite3's item image edit/crop flyout (app/views/items/_show.html.erb) - "change
   // image" always available, "crop image" only once an image exists to crop.
-  const pickAndUploadItemImage = async (item) => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert(i18n.t('wishlist.permissionRequiredTitle'), i18n.t('wishlist.photoPermissionMessage'));
-      return;
-    }
+  const pickAndUploadItemImage = async (item, source = 'library') => {
+    const asset = await pickImageAsset(source);
+    if (!asset) return;
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 1,
-    });
-    if (result.canceled || !result.assets?.length) return;
-
-    const asset = result.assets[0];
-    setUploadingImage(true);
+    // performingItemAction, not uploadingImage - this is triggered from inside the item detail
+    // Modal (handleChangeItemImagePress's Alert), and unlike uploadingImage's own overlay (only
+    // ever mounted at the top level), performingItemActionOverlay is already correctly mounted
+    // there too, so it's actually visible for this flow instead of rendering behind that Modal.
+    setPerformingItemAction(true);
     try {
       const formData = new FormData();
       formData.append('image', {
@@ -922,14 +982,17 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
         name: asset.fileName || 'upload.jpg',
         type: asset.mimeType || 'image/jpeg',
       });
-      const { data } = await api.patch(`/wishlists/${currentWishlist.admin_key}/items/${item.id}/image`, formData, {
+      // Mirrors wishsite3's images_controller.rb#update: a plain upload just saves and redirects
+      // back to the item - cropping only ever happens as a separate, explicitly chosen follow-up
+      // action (openCropExistingItemImage/"Bild zuschneiden"), never forced right after uploading.
+      await api.patch(`/wishlists/${currentWishlist.admin_key}/items/${item.id}/image`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setCropSession({ mode: 'item', itemId: item.id, imageUri: data.image_url });
+      refreshSingleItem(item.id);
     } catch (error) {
       Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.imageUploadError'));
     } finally {
-      setUploadingImage(false);
+      setPerformingItemAction(false);
     }
   };
 
@@ -946,9 +1009,17 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   };
 
   const handleChangeItemImagePress = (item) => {
-    const buttons = [
-      { text: i18n.t('wishlist.changeItemImageLink'), onPress: () => pickAndUploadItemImage(item) },
-    ];
+    const buttons = [];
+    // Mirrors wishsite3's images/_image_form.html.erb "shop" tab - re-runs the same image
+    // search the item's link already went through once, on demand, for whenever the item
+    // didn't get a good image the first time (or its link changed since).
+    if (item.links && item.links.length > 0) {
+      buttons.push({ text: i18n.t('wishlist.searchItemImagesLink'), onPress: () => handleSearchItemImages(item.id, item.links[0].url) });
+    }
+    buttons.push(
+      { text: i18n.t('wishlist.selectImages'), onPress: () => pickAndUploadItemImage(item, 'library') },
+      { text: i18n.t('wishlist.takePhoto'), onPress: () => pickAndUploadItemImage(item, 'camera') },
+    );
     if (item.image_url) {
       buttons.push({
         text: i18n.t('wishlist.cropItemImageLink'),
@@ -957,6 +1028,48 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     }
     buttons.push({ text: i18n.t('wishlist.cancel'), style: 'cancel' });
     Alert.alert(i18n.t('wishlist.changeItemImageLink'), null, buttons);
+  };
+
+  // Takes the raw itemId/url rather than a full item object so it can be triggered both from an
+  // existing item (handleChangeItemImagePress) and right after creating a new one, before any
+  // full item representation of it exists locally (handleSaveDirectWish).
+  const handleSearchItemImages = async (itemId, url) => {
+    setImageSearchItem({ itemId, loading: true, images: [], selectedIndex: 0 });
+    try {
+      const { data } = await api.get(`/images/load_images?url=${encodeURIComponent(url)}`, { timeout: 60000 });
+      setImageSearchItem({ itemId, loading: false, images: data.images || [], selectedIndex: 0 });
+    } catch (error) {
+      setImageSearchItem({ itemId, loading: false, images: [], selectedIndex: 0 });
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.shareGenericError'));
+    }
+  };
+
+  const handleSaveSearchedItemImage = async () => {
+    if (!imageSearchItem) return;
+    const uri = getImageUri(imageSearchItem.images[imageSearchItem.selectedIndex]);
+    const itemId = imageSearchItem.itemId;
+    // performingItemAction rather than the global loading overlay: this Modal is nested two
+    // levels deep (item detail Modal -> this one), and a Modal presented from the app root
+    // doesn't reliably stack on top of an already-nested one - performingItemActionOverlay is a
+    // plain View mounted directly inside this Modal's own content below instead, which sidesteps
+    // that entirely.
+    setPerformingItemAction(true);
+    try {
+      if (uri) {
+        await updateItem(itemId, { remote_image_url: uri });
+        // updateItem refreshes the hook's own items list, but not the separate selectedItem
+        // state the (still open) item detail view is actually rendering from - without this it
+        // keeps showing the old image until backed out of and reopened.
+        refreshSingleItem(itemId);
+      }
+    } catch (error) {
+      // updateItem rethrows on failure - without this the popup would just sit there with no
+      // explanation, since nothing downstream of an uncaught throw here would ever run.
+      Alert.alert(i18n.t('wishlist.error'), i18n.t('wishlist.imageUploadError'));
+    } finally {
+      setPerformingItemAction(false);
+      setImageSearchItem(null);
+    }
   };
 
   const imageActionLabel = (mode) => {
@@ -972,7 +1085,8 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
     const isAvatar = mode === 'avatar';
     const hasImage = isAvatar ? !!currentWishlist.user_image_url : !!currentWishlist.background_image_url;
     const buttons = [
-      { text: i18n.t('wishlist.selectImages'), onPress: () => pickAndUploadImage(mode) },
+      { text: i18n.t('wishlist.selectImages'), onPress: () => pickAndUploadImage(mode, 'library') },
+      { text: i18n.t('wishlist.takePhoto'), onPress: () => pickAndUploadImage(mode, 'camera') },
     ];
     if (hasImage) {
       if (!isAvatar) {
@@ -1023,6 +1137,21 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   // Ported from wishsite3's #share-wl / #share-menu (app/views/wishlist/_admin_menu.html.erb).
   const shareKey = currentWishlist.custom_key || currentWishlist.access_key;
   const shareUrl = `${WEB_BASE_URL}/wishlist/${shareKey}`;
+  // Admin/edit link (wishsite3's _instructions_after_creation.html.erb uses admin_wishlist_url,
+  // i.e. the same /wishlist/:key route keyed by admin_key instead of access_key).
+  const editUrl = `${WEB_BASE_URL}/wishlist/${currentWishlist.admin_key}`;
+
+  const handleCopyCreatedInfoEditLink = async () => {
+    await Clipboard.setStringAsync(editUrl);
+    setCreatedInfoEditLinkCopied(true);
+    setTimeout(() => setCreatedInfoEditLinkCopied(false), 2000);
+  };
+
+  const handleCopyCreatedInfoShareLink = async () => {
+    await Clipboard.setStringAsync(shareUrl);
+    setCreatedInfoShareLinkCopied(true);
+    setTimeout(() => setCreatedInfoShareLinkCopied(false), 2000);
+  };
 
   const openShareMenu = async () => {
     closeAllMenus();
@@ -1641,6 +1770,11 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       color: theme.text,
       marginBottom: 15,
     },
+    createdInfoSectionHeader: {
+      ...strongStyle(isTablet ? 16 : 14),
+      color: theme.text,
+      marginBottom: 4,
+    },
     shareUrlLabel: {
       ...strongStyle(13),
       color: theme.text,
@@ -1829,6 +1963,12 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       justifyContent: 'center',
       alignItems: 'center',
       alignSelf: 'stretch',
+      position: 'relative',
+    },
+    continueButtonSpinner: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     modalButtons: {
       marginTop: 20,
@@ -1939,6 +2079,30 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       alignItems: 'center',
       marginBottom: 15,
     },
+    // Mirrors wishsite3's #new-item-form .scrape-notice(--success|--warning) (wishlist.scss).
+    // marginTop clears the modal's absolutely-positioned × close button (top:10, height 30),
+    // which the removed header row used to clear simply by being a flex row starting further in.
+    scrapeNotice: {
+      ...INPUT_RADIUS,
+      borderWidth: 1,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      marginTop: 20,
+      marginBottom: 15,
+    },
+    scrapeNoticeSuccess: {
+      backgroundColor: isDarkMode ? palette.green.d4 : palette.green.l4,
+      borderColor: isDarkMode ? palette.green.d2 : palette.green.l2,
+    },
+    scrapeNoticeWarning: {
+      backgroundColor: isDarkMode ? palette.yellow.d4 : palette.yellow.l4,
+      borderColor: isDarkMode ? palette.yellow.d2 : palette.yellow.l2,
+    },
+    scrapeNoticeText: {
+      ...bodyStyle(isTablet ? 14 : 13),
+      color: theme.text,
+      textAlign: 'center',
+    },
     detailImage: {
       width: '100%',
       height: 200,
@@ -2040,30 +2204,10 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       ...buttonStyle(isTablet ? 16 : 14),
       color: 'white',
     },
-    imageCarousel: {
-      marginBottom: 15,
-    },
-    noImagesFound: {
-      alignItems: 'center',
-      marginBottom: 15,
-      padding: 10,
-    },
-    noImagesFoundImage: {
-      width: 70,
-      height: 70,
-      marginBottom: 10,
-      opacity: 0.7,
-    },
-    noImagesFoundText: {
-      ...bodyStyle(isTablet ? 14 : 13),
-      color: theme.textMuted,
-      textAlign: 'center',
-    },
-    carouselTitle: {
-      ...headingStyle(isTablet ? 18 : 16),
-      marginBottom: 10,
-      color: theme.text,
-    },
+    // imageCarousel/noImagesFound*/carouselTitle/imageFallback/fallbackText moved to the shared
+    // ProductImageCarousel component. carouselContent/carouselImageContainer/selectedImageContainer/
+    // carouselImage/selectedOverlay/checkmark stay here too - the item-image crop picker below
+    // still uses them directly.
     carouselContent: {
       paddingHorizontal: 5,
     },
@@ -2080,19 +2224,6 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
       width: 80,
       height: 80,
       borderRadius: 8,
-    },
-    imageFallback: {
-      width: 80,
-      height: 80,
-      borderRadius: 8,
-      backgroundColor: theme.text,
-      opacity: 0.1,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    fallbackText: {
-      ...bodyStyle(isTablet ? 28 : 24),
-      color: theme.text,
     },
     selectedOverlay: {
       position: 'absolute',
@@ -2516,6 +2647,26 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
   // of parked high up with a big empty gap below it before the title starts.
   const backButtonTop = bannerWrapperHeight > 0 ? 15 : 24;
 
+  // Same reasoning as renderMoveItemPicker below: item-mode crops are triggered from inside the
+  // item detail Modal (pickAndUploadItemImage/openCropExistingItemImage), so this needs the same
+  // dual-mount treatment - avatar/background crops are triggered from the main screen and only
+  // ever need the top-level copy, hence the mode check in the visible expression at both call sites.
+  const renderCropModal = (visible) => (
+    <Modal animationType="slide" transparent={false} visible={visible} onRequestClose={() => setCropSession(null)}>
+      {cropSession && (
+        <ImageCropScreen
+          mode={cropSession.mode}
+          wishlistId={currentWishlist.admin_key}
+          itemId={cropSession.itemId}
+          imageUri={cropSession.imageUri}
+          initialCrop={cropSession.initialCrop}
+          onCancel={() => setCropSession(null)}
+          onSaved={handleCropSaved}
+        />
+      )}
+    </Modal>
+  );
+
   // Mirrors items_controller.rb#move_form (web) — pick which of the user's own other wishlists
   // to move this item to. A plain top-level <Modal> here only ever presents correctly when the
   // item detail Modal isn't already showing on top of it: iOS won't present a second modal from
@@ -2562,6 +2713,49 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             </ScrollView>
           )}
         </View>
+      </View>
+    </Modal>
+  );
+
+  // Same reasoning as renderMoveItemPicker above - its only trigger (handleChangeItemImagePress)
+  // is itself only ever reachable from inside the item detail Modal, but mounted both places
+  // regardless so it doesn't silently break if that ever changes.
+  const renderImageSearchPicker = (visible) => (
+    <Modal animationType="slide" transparent={true} visible={visible} onRequestClose={() => setImageSearchItem(null)}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <TouchableOpacity style={styles.modalCloseButton} onPress={() => setImageSearchItem(null)}>
+            <Text style={styles.modalCloseText}>×</Text>
+          </TouchableOpacity>
+          <Text style={[styles.modalTitle, { marginTop: 20 }]}>{i18n.t('wishlist.searchItemImagesTitle')}</Text>
+          {imageSearchItem?.loading ? (
+            <ActivityIndicator color={theme.primary} style={{ marginVertical: 20 }} />
+          ) : (
+            <>
+              <ProductImageCarousel
+                images={imageSearchItem?.images || []}
+                imagesChecked={!!imageSearchItem && !imageSearchItem.loading}
+                selectedIndex={imageSearchItem?.selectedIndex || 0}
+                onSelectIndex={(index) => setImageSearchItem((prev) => ({ ...prev, selectedIndex: index }))}
+              />
+              {imageSearchItem?.images.length > 0 && (
+                <View style={styles.modalButtons}>
+                  <Button
+                    onPress={handleSaveSearchedItemImage}
+                    disabled={performingItemAction}
+                    loading={performingItemAction}
+                    fontSize={isTablet ? 18 : 16}
+                    title={i18n.t('wishlist.save')}
+                  />
+                </View>
+              )}
+            </>
+          )}
+        </View>
+        {/* This Modal sits a level deeper than the item detail Modal performingItemActionOverlay
+            is otherwise mounted in (see below) - its own native layer would hide that copy, so
+            it needs its own directly inside this one's content too. */}
+        {performingItemActionOverlay}
       </View>
     </Modal>
   );
@@ -2652,9 +2846,13 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                         <TouchableOpacity style={styles.avatarMenuCloseButton} onPress={() => setAvatarMenuVisible(false)}>
                           <Text style={styles.avatarMenuToggleText}>×</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.headerOptionItem} onPress={() => { setAvatarMenuVisible(false); pickAndUploadImage('avatar'); }}>
+                        <TouchableOpacity style={styles.headerOptionItem} onPress={() => { setAvatarMenuVisible(false); pickAndUploadImage('avatar', 'library'); }}>
                           <SvgXml xml={userImageIcon(theme.text)} width={16} height={16} />
                           <Text style={styles.headerOptionText}>{i18n.t('wishlist.selectImages')}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.headerOptionItem} onPress={() => { setAvatarMenuVisible(false); pickAndUploadImage('avatar', 'camera'); }}>
+                          <SvgXml xml={cameraIcon(theme.text)} width={16} height={16} />
+                          <Text style={styles.headerOptionText}>{i18n.t('wishlist.takePhoto')}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.headerOptionItem} onPress={() => { setAvatarMenuVisible(false); openCropExisting('avatar'); }}>
                           <SvgXml xml={cropIcon(theme.text)} width={16} height={16} />
@@ -2851,62 +3049,28 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
             {directAddMode ? (
               // Direct Add Form
               <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                <View style={styles.detailHeader}>
-                  <TouchableOpacity onPress={handleBackToSearch}>
-                    <Text style={styles.backButtonText}>{i18n.t('wishlist.backButton')}</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.modalTitle}>{fromSearch ? i18n.t('wishlist.newWishTitle') : i18n.t('wishlist.directWishTitle')}</Text>
-                </View>
-                
-
-
-                {directWish.images && directWish.images.length > 0 && (
-                  <View style={styles.imageCarousel}>
-                    <Text style={styles.carouselTitle}>{i18n.t('wishlist.selectImages')}</Text>
-                    <FlatList
-                      horizontal
-                      data={directWish.images}
-                      keyExtractor={(item, index) => index.toString()}
-                      renderItem={({ item, index }) => (
-                        <TouchableOpacity
-                          onPress={() => setDirectWish({...directWish, selectedImageIndex: index})}
-                          style={[
-                            styles.carouselImageContainer,
-                            index === directWish.selectedImageIndex && styles.selectedImageContainer
-                          ]}
-                        >
-                          <View style={styles.carouselImage}>
-                            <View style={styles.imageFallback}>
-                              <Text style={styles.fallbackText}>📷</Text>
-                            </View>
-                            <Image
-                              source={typeof item === 'string' ? { uri: item } : item}
-                              style={[styles.carouselImage, { position: 'absolute', zIndex: 1 }]}
-                              resizeMode="contain"
-                            />
-                          </View>
-                          {index === directWish.selectedImageIndex && (
-                            <View style={styles.selectedOverlay}>
-                              <Text style={styles.checkmark}>✓</Text>
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                      )}
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.carouselContent}
-                    />
-                  </View>
+                {fromSearch ? (
+                  // Mirrors wishsite3's search_products/find.js.erb: a URL search result has no
+                  // popup title or back-link at all, just a notice on whether the scrape found
+                  // anything (@scrape_data_found) - see the "direct add" branch below, which has
+                  // no web back-link equivalent either but does keep its own title.
+                  scrapeDataFound !== null && (
+                    <View style={[styles.scrapeNotice, scrapeDataFound ? styles.scrapeNoticeSuccess : styles.scrapeNoticeWarning]}>
+                      <Text style={styles.scrapeNoticeText}>
+                        {i18n.t(scrapeDataFound ? 'wishlist.scrapeSuccessNotice' : 'wishlist.scrapeFailureNotice')}
+                      </Text>
+                    </View>
+                  )
+                ) : (
+                  <Text style={[styles.modalTitle, { marginTop: 20 }]}>{i18n.t('wishlist.directWishTitle')}</Text>
                 )}
 
-                {/* Mirrors wishsite3's images/load_images.js.erb else-branch: a URL was
-                    scraped but no images came back, shown with no_image.png + a hint that
-                    the user can still add an image themselves. */}
-                {directWish.imagesChecked && directWish.images.length === 0 && (
-                  <View style={styles.noImagesFound}>
-                    <Image source={require('../../assets/no_image.png')} style={styles.noImagesFoundImage} resizeMode="contain" />
-                    <Text style={styles.noImagesFoundText}>{i18n.t('wishlist.noImagesFoundNotice')}</Text>
-                  </View>
-                )}
+                <ProductImageCarousel
+                  images={directWish.images}
+                  imagesChecked={directWish.imagesChecked}
+                  selectedIndex={directWish.selectedImageIndex}
+                  onSelectIndex={(index) => setDirectWish({ ...directWish, selectedImageIndex: index })}
+                />
 
                 <Text style={styles.inputLabel}>{i18n.t('wishlist.titlePlaceholder')}</Text>
                 <TextField
@@ -3077,14 +3241,22 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
                     onChangeText={setWishTitle}
                     autoFocus={true}
                   />
-                  <TouchableOpacity 
-                    style={[styles.continueButton, searching && styles.saveButtonDisabled]} 
+                  <TouchableOpacity
+                    style={[styles.continueButton, searching && styles.saveButtonDisabled]}
                     onPress={handleSearchProduct}
                     disabled={searching}
                   >
-                    <Text style={styles.saveButtonText}>
-                      {searching ? i18n.t('wishlist.searching') : i18n.t('wishlist.continue')}
+                    {/* Text stays laid out (just invisible) instead of being swapped out for the
+                        spinner, so the button keeps the width the text itself demands either way -
+                        an ActivityIndicator alone is narrower and would otherwise shrink the button. */}
+                    <Text style={[styles.saveButtonText, searching && { opacity: 0 }]}>
+                      {i18n.t('wishlist.continue')}
                     </Text>
+                    {searching && (
+                      <View style={styles.continueButtonSpinner} pointerEvents="none">
+                        <ActivityIndicator size="small" color="white" />
+                      </View>
+                    )}
                   </TouchableOpacity>
                 </View>
                 
@@ -3194,6 +3366,8 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
           />
         )}
         {renderMoveItemPicker(!!moveItemTarget && itemDetailMode)}
+        {renderImageSearchPicker(!!imageSearchItem && itemDetailMode)}
+        {renderCropModal(!!cropSession && cropSession.mode === 'item' && itemDetailMode)}
         {performingItemActionOverlay}
       </Modal>
 
@@ -3722,17 +3896,11 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
           Modal below) only when NOT triggered from within that Modal — see renderMoveItemPicker
           for why it needs a second, nested copy for that case. */}
       {renderMoveItemPicker(!!moveItemTarget && !itemDetailMode)}
+      {renderImageSearchPicker(!!imageSearchItem && !itemDetailMode)}
       {performingItemActionOverlay}
       </Animated.View>
       </GestureDetector>
       {optionsOverlay}
-
-      {/* Loading overlay while fetching images */}
-      {loadingImages && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', zIndex: 3000 }}>
-          <Text style={{ color: 'white', fontSize: 16 }}>Bilder werden geladen...</Text>
-        </View>
-      )}
 
       {/* Loading overlay while fetching fresh wishlist data for the edit form */}
       {loadingEditWishlist && (
@@ -3748,70 +3916,13 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
         </View>
       )}
 
-      {/* Image picker modal after item save */}
-      <Modal animationType="slide" transparent={true} visible={!!imagePickerItem} onRequestClose={() => setImagePickerItem(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setImagePickerItem(null)}>
-              <Text style={styles.modalCloseText}>×</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>{i18n.t('wishlist.selectImages')}</Text>
-            {imagePickerItem && (
-              <>
-                <FlatList
-                  horizontal
-                  data={imagePickerItem.images}
-                  keyExtractor={(_, i) => i.toString()}
-                  renderItem={({ item, index }) => (
-                    <TouchableOpacity
-                      onPress={() => setImagePickerItem({ ...imagePickerItem, selectedIndex: index })}
-                      style={[styles.carouselImageContainer, index === imagePickerItem.selectedIndex && styles.selectedImageContainer]}
-                    >
-                      <Image source={{ uri: item.uri }} style={styles.carouselImage} resizeMode="contain" />
-                      {index === imagePickerItem.selectedIndex && (
-                        <View style={styles.selectedOverlay}><Text style={styles.checkmark}>✓</Text></View>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.carouselContent}
-                />
-                <View style={styles.modalButtons}>
-                  <Button
-                    onPress={async () => {
-                      const img = imagePickerItem.images[imagePickerItem.selectedIndex];
-                      await updateItem(imagePickerItem.itemId, { remote_image_url: img.uri });
-                      setImagePickerItem(null);
-                    }}
-                    fontSize={isTablet ? 18 : 16}
-                    title={i18n.t('wishlist.save')}
-                  />
-                </View>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
-
       {uploadingImage && (
         <View style={styles.uploadOverlay}>
           <ActivityIndicator color="#fff" size="large" />
         </View>
       )}
 
-      <Modal animationType="slide" transparent={false} visible={!!cropSession} onRequestClose={() => setCropSession(null)}>
-        {cropSession && (
-          <ImageCropScreen
-            mode={cropSession.mode}
-            wishlistId={currentWishlist.admin_key}
-            itemId={cropSession.itemId}
-            imageUri={cropSession.imageUri}
-            initialCrop={cropSession.initialCrop}
-            onCancel={() => setCropSession(null)}
-            onSaved={handleCropSaved}
-          />
-        )}
-      </Modal>
+      {renderCropModal(!!cropSession && !(cropSession.mode === 'item' && itemDetailMode))}
 
       <Modal animationType="slide" transparent={true} visible={shareMenuVisible} onRequestClose={() => (shareSubView ? setShareSubView(null) : setShareMenuVisible(false))}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -3971,6 +4082,49 @@ const WishlistDetailScreen = ({ wishlist, authToken, onBack, onWishlistUpdate, o
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <Modal animationType="fade" transparent={true} visible={createdInfoModalVisible} onRequestClose={() => setCreatedInfoModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>{i18n.t('wishlist.createdInfoTitle')}</Text>
+
+              <Text style={styles.createdInfoSectionHeader}>{i18n.t('wishlist.createdInfoEditHeader')}</Text>
+              <Text style={styles.shareHint}>{i18n.t('wishlist.createdInfoEditText')}</Text>
+              <View style={[styles.shareUrlBox, { marginTop: 8 }]}>
+                <Text style={styles.shareUrlText} numberOfLines={1} ellipsizeMode="middle">{editUrl}</Text>
+              </View>
+              <Button
+                variant="secondary"
+                onPress={handleCopyCreatedInfoEditLink}
+                fontSize={14}
+                title={createdInfoEditLinkCopied ? i18n.t('wishlist.shareLinkCopied') : i18n.t('wishlist.shareCopyLink')}
+                style={[styles.shareCopyButton, { marginBottom: 20 }]}
+              />
+
+              <Text style={styles.createdInfoSectionHeader}>{i18n.t('wishlist.createdInfoShareHeader')}</Text>
+              <Text style={styles.shareHint}>{i18n.t('wishlist.createdInfoShareText')}</Text>
+              <View style={[styles.shareUrlBox, { marginTop: 8 }]}>
+                <Text style={styles.shareUrlText} numberOfLines={1} ellipsizeMode="middle">{shareUrl}</Text>
+              </View>
+              <Button
+                variant="secondary"
+                onPress={handleCopyCreatedInfoShareLink}
+                fontSize={14}
+                title={createdInfoShareLinkCopied ? i18n.t('wishlist.shareLinkCopied') : i18n.t('wishlist.shareCopyLink')}
+                style={[styles.shareCopyButton, { marginBottom: 20 }]}
+              />
+
+              <Button
+                onPress={() => setCreatedInfoModalVisible(false)}
+                fontSize={16}
+                title={i18n.t('wishlist.createdInfoButton')}
+              />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 };

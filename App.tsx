@@ -15,10 +15,11 @@ import WelcomeScreen from './src/screens/WelcomeScreen';
 import BiometricLockScreen from './src/screens/BiometricLockScreen';
 import BiometricSetupPrompt from './src/components/BiometricSetupPrompt';
 import OfflineBanner from './src/components/OfflineBanner';
+import GlobalLoadingOverlay from './src/components/GlobalLoadingOverlay';
 import Toast from './src/components/Toast';
 import { useShareHandler } from './src/hooks/useShareHandler';
 import i18n from './src/i18n';
-import { setAuthToken as setApiAuthToken, setSessionExpiredHandler } from './src/services/api';
+import { setAuthToken as setApiAuthToken, setSessionExpiredHandler, logout as apiLogout } from './src/services/api';
 import {
   getBiometricLockEnabled,
   setBiometricLockEnabled,
@@ -71,6 +72,7 @@ function App() {
           <LoadingScreen />
         )}
         <OfflineBanner />
+        <GlobalLoadingOverlay />
         <Toast />
       </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -86,7 +88,11 @@ function AppContent() {
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [selectedWishlist, setSelectedWishlist] = useState(null);
   const [autoOpenEditWishlist, setAutoOpenEditWishlist] = useState(false);
+  const [justCreatedWishlist, setJustCreatedWishlist] = useState(false);
+  const [scrollToItemId, setScrollToItemId] = useState(null);
   const [shareData, setShareData] = useState(null);
+  const [shareTitle, setShareTitle] = useState(null);
+  const [shareDescription, setShareDescription] = useState(null);
   const [showShareForm, setShowShareForm] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const [showBiometricSetupPrompt, setShowBiometricSetupPrompt] = useState(false);
@@ -147,9 +153,11 @@ function AppContent() {
     });
   }, []);
 
-  const handleShareReceived = (sharedData) => {
+  const handleShareReceived = (sharedData, sharedMeta) => {
     if (user && authToken) {
       setShareData(sharedData);
+      setShareTitle(sharedMeta?.title || null);
+      setShareDescription(sharedMeta?.description || null);
       setShowShareForm(true);
     }
   };
@@ -216,19 +224,26 @@ function AppContent() {
     // Face ID/Touch ID button to sign straight back in without retyping credentials - the lock
     // toggle is the thing actually gating re-entry here, same as it gates the app returning from
     // the background. Without biometric lock enabled there's nothing guarding that stored
-    // session, so a plain logout has to clear it same as before.
+    // session, so a plain logout has to clear it same as before. Correspondingly, the server-side
+    // token must only be revoked when the local session is actually cleared - revoking it while
+    // still keeping it around for Face ID re-entry would turn the next Face ID unlock into a
+    // guaranteed "session expired".
     if (await getBiometricLockEnabled()) return;
+    apiLogout();
     clearSession();
   };
 
   const handleWishlistSelect = (wishlist, options) => {
     setSelectedWishlist(wishlist);
     setAutoOpenEditWishlist(!!options?.openEdit);
+    setJustCreatedWishlist(!!options?.justCreated);
   };
 
   const handleBackToWishlists = () => {
     setSelectedWishlist(null);
     setAutoOpenEditWishlist(false);
+    setJustCreatedWishlist(false);
+    setScrollToItemId(null);
   };
 
   const showRegisterScreen = () => {
@@ -246,9 +261,20 @@ function AppContent() {
     setShowRegister(false);
   };
 
-  const handleShareFormBack = () => {
+  // Called both by the header's plain back button (no args - just returns to whatever was
+  // showing before) and, after a successful save, by ShareFormScreen with the wishsite/item
+  // the wish just landed on - lands there (opening it if it wasn't already) scrolled to it,
+  // the same "jump to what you just added" behavior addItem's callers already get in
+  // WishlistDetailScreen itself.
+  const handleShareFormBack = (wishlistAdminKey, newItemId) => {
     setShowShareForm(false);
     setShareData(null);
+    setShareTitle(null);
+    setShareDescription(null);
+    if (wishlistAdminKey && newItemId) {
+      setSelectedWishlist({ admin_key: wishlistAdminKey });
+      setScrollToItemId(newItemId);
+    }
   };
 
   // Mirrors the branching below exactly, so "page views" cover every screen this component can
@@ -317,6 +343,8 @@ function AppContent() {
             route={{
               params: {
                 sharedUrl: shareData,
+                sharedTitle: shareTitle,
+                sharedDescription: shareDescription,
                 wishlistId: selectedWishlist?.admin_key || null
               }
             }}
@@ -326,11 +354,19 @@ function AppContent() {
           />
         ) : selectedWishlist ? (
           <WishlistDetailScreen
+            // Forces a fresh mount (fresh item list included) specifically when landing here
+            // from ShareFormScreen on a wishsite that was already open - that transition doesn't
+            // go through the usual selectedWishlist->null->wishlist unmount/remount cycle every
+            // other navigation path here does, so this screen's own item list would otherwise
+            // still be missing the item that was just added to it from outside.
+            key={`${selectedWishlist.admin_key}-${scrollToItemId || ''}`}
             wishlist={selectedWishlist}
             authToken={authToken}
             onBack={handleBackToWishlists}
             onLogout={handleLogout}
             autoOpenEdit={autoOpenEditWishlist}
+            justCreated={justCreatedWishlist}
+            scrollToItemId={scrollToItemId}
           />
         ) : (
           <WishlistScreen 

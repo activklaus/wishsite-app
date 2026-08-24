@@ -84,6 +84,10 @@ const styles = StyleSheet.create({
   },
   multiline: {
     minHeight: 100,
+    // Capped so a long description can't grow tall enough to swallow every touch drag for its
+    // own cursor placement instead of the popup's surrounding ScrollView - past this height it
+    // scrolls internally instead of growing further.
+    maxHeight: 250,
     paddingTop: 12,
     textAlignVertical: 'top',
   },

@@ -456,18 +456,21 @@ const WishlistScreen = ({ onLogout, authToken, onWishlistSelect, onAccountPress 
 
     setCreating(true);
     try {
-      await api.post('/wishlists', {
+      const { data } = await api.post('/wishlists', {
         title: newWishlistTitle,
         description: newWishlistDescription || '',
         user_id: userId
       });
 
-      await loadWishlists();
-
       setNewWishlistModal(false);
       setNewWishlistTitle('');
       setNewWishlistDescription('');
       setLinkMode(false);
+
+      // Land directly on the new wishsite (mirrors wishsite3's create redirect to the admin
+      // page) instead of the refreshed overview list - the info popup is triggered there via
+      // justCreated.
+      onWishlistSelect({ admin_key: data.id, access_key: data.access_key, title: data.title, description: data.description }, { justCreated: true });
     } catch (error) {
       console.log('Error creating wishlist:', error);
     } finally {

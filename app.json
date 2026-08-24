@@ -42,7 +42,9 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "wishsite benötigt Zugriff auf deine Fotos, um ein Hintergrund- oder Profilbild für deine wishsite auszuwählen."
+          "photosPermission": "wishsite benötigt Zugriff auf deine Fotos, um ein Hintergrund-, Profil- oder Wunsch-Bild für deine wishsite auszuwählen.",
+          "cameraPermission": "wishsite benötigt Zugriff auf deine Kamera, um ein Foto für dein Hintergrund-, Profil- oder Wunsch-Bild aufzunehmen.",
+          "microphonePermission": false
         }
       ],
       [
@@ -69,13 +71,22 @@
           "color": "#ffffff"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "targetSdkVersion": 35
+          }
+        }
+      ],
+      "./plugins/withFmtCxx17Fix"
     ],
     "extra": {
       "eas": {
         "projectId": "04efd8eb-a257-4f51-b249-50ad19d1344f"
       }
     },
-    "owner": "anaiccials-organization"
+    "owner": "wishsite"
   }
 }

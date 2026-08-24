@@ -89,7 +89,7 @@
     "enterWish": "Enter wish...",
     "cancel": "Cancel",
     "save": "Save",
-    "searching": "Searching...",
+    "searching": "Reading website data...",
     "directAdd": "Enter wish directly",
     "addingToWishlist": "Adding...",
     "addToMyWishlist": "Add to my wishsite",
@@ -132,7 +132,7 @@
     "moveUp": "Move up",
     "moveDown": "Move down",
     "saving": "Saving...",
-    "continue": "Continue →",
+    "continue": "Continue",
     "backButton": "← Back",
     "newWishTitle": "Enter new wish",
     "directWishTitle": "Enter wish directly",
@@ -140,7 +140,11 @@
     "createWishlistSubmit": "Create wishsite",
     "linkWishlistSubmit": "Assign to my account",
     "selectImages": "Select image",
+    "takePhoto": "Take photo",
+    "cameraPermissionMessage": "Please allow access to your camera to take a photo.",
     "noImagesFoundNotice": "Unfortunately, no images can be read from the linked page. However, you can still upload or link an image yourself.",
+    "scrapeSuccessNotice": "The data for the given URL was loaded successfully. You can adjust it now if needed.",
+    "scrapeFailureNotice": "No data could be extracted from this website. You can fill in the details manually – the URL has already been saved.",
     "titlePlaceholder": "Title",
     "descriptionPlaceholder": "Description (optional)",
     "pricePlaceholder": "Price (optional)",
@@ -197,10 +201,10 @@
     "addWishlistButtonText": "Assign wishsite to my account",
     "addGuestWishlistButtonText": "Bookmark wish list",
     "guestWishlistsHeader": "wishsites from others",
-    "shareFormTitle": "Add Shared Wish",
+    "shareFormTitle": "Add Wish",
     "shareFormError": "Title is required",
     "shareFormSaveError": "Error saving",
-    "shareFormSelectWishlist": "Add to wishsite",
+    "shareFormSelectWishlist": "Select wishsite",
     "shareFormSelectWishlistError": "Please select a wishsite",
     "shareFormNoWishlists": "You don't have any wishsites yet",
     "modalTitle": "wishsite",
@@ -226,6 +230,8 @@
     "cropBackgroundTitle": "Crop background",
     "cropAvatarTitle": "Crop profile picture",
     "changeItemImageLink": "Change image",
+    "searchItemImagesLink": "Search images from website",
+    "searchItemImagesTitle": "Images from the linked website",
     "cropItemImageLink": "Crop image",
     "cropItemTitle": "Crop image",
     "cropHint": "Drag to move, pinch with two fingers to zoom",
@@ -263,6 +269,13 @@
     "shareEmbedHint": "Select and copy the following HTML code and paste it into your website.",
     "shareNative": "Share via...",
     "shareGenericError": "Something went wrong",
+
+    "createdInfoTitle": "Your wishsite has been created",
+    "createdInfoEditHeader": "Save this link",
+    "createdInfoEditText": "You can access and edit your wishsite anytime in your browser using this link:",
+    "createdInfoShareHeader": "Share your wishsite",
+    "createdInfoShareText": "Send this link to your friends and family so they can reserve your wishes:",
+    "createdInfoButton": "Let's go",
 
     "stats": {
       "header": "Your wish list statistics",
@@ -386,6 +399,7 @@
   },
   "offline": {
     "banner": "No internet connection",
-    "actionFailed": "No internet connection. Action could not be completed."
+    "actionFailed": "No internet connection. Action could not be completed.",
+    "refresh": "Refresh"
   }
 }

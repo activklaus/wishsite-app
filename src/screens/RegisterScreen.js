@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Image, Linking, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Image, Linking, Alert, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import api from '../services/api';
 import i18n from '../i18n';
@@ -87,6 +87,9 @@ const RegisterScreen = ({ onRegister, onBackToLogin }) => {
     container: {
       flex: 1,
       backgroundColor: theme.background,
+    },
+    scrollContent: {
+      flexGrow: 1,
     },
     logo: {
       width: isTablet ? 200 : 150,
@@ -231,7 +234,16 @@ const RegisterScreen = ({ onRegister, onBackToLogin }) => {
   });
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >
       <Image
         source={require('../../assets/wishsite_logo_name_250.png')}
         style={styles.logo}
@@ -351,7 +363,8 @@ const RegisterScreen = ({ onRegister, onBackToLogin }) => {
         </TouchableOpacity>
         </View>
       </View>
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 };
 
